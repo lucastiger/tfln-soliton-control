@@ -43,7 +43,7 @@ loss:                                 # -> LossConfig (observer-relevant fields)
   nll_logvar_floor: -10.0
   thermal_norm: empirical
   horizon_dt: null                    # null => derive from dataset snapshot_interval * t_r; set a float only to override
-  # Gamma_th and tau_th are sourced from tfln_params.yaml at runtime — do NOT hardcode
+  # Gamma_th and tau_th are sourced from sin_params.yaml at runtime — do NOT hardcode
 
 optim:
   lr: 3.0e-4
