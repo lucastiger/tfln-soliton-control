@@ -765,9 +765,7 @@ def train_observer(
 
     optimizer = build_optimizer(model, cfg)
     scheduler = build_scheduler(optimizer, cfg)
-    # Controller scaler is deferred (Phase-2); the required controller-scaler contract lives
-    # in the train_controller docstring (kept in one place so comment and docstring don't drift).
-    scaler = None
+    scaler = build_scaler(cfg, loss_cfg)  # shares loss_cfg with loss_fn (mutated in place)
 
     trainer = Trainer(
         model, optimizer, scheduler, loss_fn, train_loader, val_loader, cfg, device,
@@ -919,7 +917,9 @@ def train_controller(cfg: SimpleNamespace, device: torch.device) -> dict[str, An
         lr=float(cfg.optim.lr), weight_decay=float(cfg.optim.weight_decay),
     )
     scheduler = build_scheduler(optimizer, cfg)
-    scaler = build_scaler(cfg, loss_cfg)
+    # Controller scaler is deferred (Phase-2); the required controller-scaler contract lives
+    # in this function's docstring (kept in one place so comment and docstring don't drift).
+    scaler = None
 
     train_loader, val_loader = build_switching_loaders(cfg)  # raises (no SwitchingDataset yet)
     class_weights = getattr(train_loader.dataset, "class_weights", None)
