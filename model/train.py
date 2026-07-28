@@ -373,10 +373,6 @@ class Trainer:
         self.early_stop_patience = int(getattr(cfg.train, "early_stop_patience", 10))
         self.checkpoint_metric = str(getattr(cfg.train, "checkpoint_metric", "val_accuracy"))
         self.checkpoint_every = int(getattr(cfg.train, "checkpoint_every", 5))
-        if self.early_stop_metric != "val_total_loss":
-            raise ValueError(f"early_stop_metric={self.early_stop_metric!r} unsupported; criterion is hardcoded to val_total_loss (min).")
-        if self.checkpoint_metric != "val_accuracy":
-            raise ValueError(f"checkpoint_metric={self.checkpoint_metric!r} unsupported; best_model.pt is hardcoded to val_accuracy (max).")
 
         self._best_ckpt_value = -float("inf")   # checkpoint_metric is mode "max" (val_accuracy)
         self._best_es_value = float("inf")       # early_stop_metric is mode "min" (val total loss)
