@@ -8,7 +8,7 @@ prior/posterior branch, classifier, decoder seed, and both autoregressive foreca
 decoders — is reused verbatim from the parent, and the ``forward`` output dict has the
 **identical keys and shapes** so ``model/loss.py`` and ``model/train.py`` are unchanged.
 
-Contract preservation (verified by ``tests/test_model.py``):
+Contract preservation:
   * ``h_final`` is dim ``gru_hidden`` (the Transformer pools to the same width the GRU did),
     so ``phys_state_refiner`` (which consumes ``[phys_state, h_final]``) is unchanged.
   * The physics PRIOR still grounds the encoder: instead of seeding the GRU layer-0 hidden
@@ -16,6 +16,15 @@ Contract preservation (verified by ``tests/test_model.py``):
     representation becomes ``h_final``. This mirrors the GRU's physics-grounded ``h0``.
   * Output keys: ``logits, pred_detuning, pred_detuning_logvar, pred_P_trans,
     pred_P_trans_logvar, phys_state, phys_state_refined, h_final, ctx`` — same as the parent.
+
+Guarded by ``tests/test_ablation_encoders.py`` (and ONLY by it — ``tests/test_model.py``
+exercises ``PIRNNObserver``, not this subclass):
+  * ``test_transformer_matches_observer_contract`` — output-dict KEY SET and per-key SHAPES
+    match ``PIRNNObserver`` exactly. This is the drift guard for the copied tail below.
+  * ``test_transformer_permutation_sensitive`` — the positional encoding is present AND
+    effective: a time-shuffled window must materially change ``h_final``.
+  * ``test_transformer_loss_backward`` — ``model/loss.py`` observer mode runs on this
+    output dict and backprops into the Transformer stack.
 
 NOTE: the forecast/classification "tail" of ``forward`` is copied from
 ``PIRNNObserver.forward`` (the parent provides no hook to override only the encoder).

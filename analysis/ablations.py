@@ -27,6 +27,7 @@ Out of scope here: the closed-loop MPC access-rate study ("Ablation 4") belongs 
 from __future__ import annotations
 
 import copy
+import json
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,27 @@ ABLATIONS = ("full", "no_physics_loss", "transformer_backbone", "si3n4_pretrain"
 
 SI3N4_CONFIG_PATH = "config/si3n4_params.yaml"
 SI3N4_H5_PATH = "data/synthetic/dataset_si3n4.h5"
+
+
+def _jsonable(obj: Any) -> Any:
+    """Recursively coerce a metrics payload into something ``json.dumps`` accepts.
+
+    ``Trainer.evaluate`` returns plain Python floats today, but the accumulators it feeds
+    from hold torch tensors / numpy scalars, so coerce defensively rather than letting a
+    stray tensor turn the zero-shot artifact into a ``TypeError`` at the end of a long run.
+    ``None`` is preserved (``per_class_recall`` uses it for "no support", which must stay
+    distinguishable from 0.0 recall).
+    """
+    if isinstance(obj, dict):
+        return {str(k): _jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_jsonable(v) for v in obj]
+    if obj is None or isinstance(obj, (bool, str, int, float)):
+        return obj
+    try:
+        return float(obj)
+    except (TypeError, ValueError):
+        return str(obj)
 
 
 def _require_file(path: str | Path, what: str) -> None:
@@ -117,6 +139,14 @@ def run_ablation(
     _, _, tfln_test_loader = build_loaders(tfln_cfg)
     zero_shot = result["trainer"].evaluate(tfln_test_loader)
     result["zero_shot_tfln"] = zero_shot
+
+    # Persist it: the zero-shot transfer numbers ARE this ablation's deliverable, and the
+    # run directory otherwise only holds the Si3N4 *training* metrics.jsonl. Trainer.evaluate
+    # returns {"loss": ..., "metrics": ..., "diag": ...}; write the whole envelope.
+    zero_shot_dir = Path(cfg.experiment.out_dir) / cfg.experiment.name
+    zero_shot_dir.mkdir(parents=True, exist_ok=True)
+    zero_shot_path = zero_shot_dir / "zero_shot_tfln.json"
+    zero_shot_path.write_text(json.dumps(_jsonable(zero_shot), indent=2), encoding="utf-8")
 
     metrics = zero_shot["metrics"]
     ss = metrics["single_soliton_recall"]
