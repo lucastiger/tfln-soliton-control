@@ -9,16 +9,29 @@
 # simulator.lle_solver._resolve_noise_flags():
 #   1. explicit solve_lle_ssfm_jax() keyword argument
 #   2. a NoiseConfig passed as solve_lle_ssfm_jax(noise_config=...)
-#   3. THIS `noise:` block
-#   4. the legacy switches inside physical_parameters (deprecated aliases:
-#      quantum_noise_enabled, pump_noise_enabled, fsr_noise_enabled, and the
-#      implicit T_k > 0 / eo_r33_m_per_v != 0 gates)
-#   5. the NoiseConfig field default
+#   3. an EXPLICIT deprecated switch in physical_parameters
+#      (quantum_noise_enabled, pump_noise_enabled, fsr_noise_enabled, and the
+#      legacy parameter aliases)
+#   4. THIS `noise:` block
+#   5. an IMPLICIT physical gate (T_k > 0, eo_r33_m_per_v != 0)
+#   6. the NoiseConfig field default
 #
-# The `noise:` block WINS over the legacy keys. Legacy keys are consulted ONLY
-# for fields absent from this block (currently: quantum_injection_cadence,
-# quantum_seed_vacuum_init, seed). Every legacy key below is kept verbatim as a
-# deprecated alias so existing configs and sidecars keep loading.
+# Levels 3 and 5 are both "legacy", split deliberately around this block:
+#   * A key a user actually WROTE into physical_parameters is an explicit
+#     instruction, so it outranks a block that may have arrived via a config
+#     round-trip (many sidecars are built by loading this file, editing
+#     physical_parameters, and dumping it back). Migration path: delete the
+#     legacy key and this block takes over.
+#   * An implicit physical gate is not an instruction, so this block outranks
+#     it. That is what finally gives trn / pyro_eo / tccr a real switch —
+#     previously they could only be silenced by setting an ambient temperature
+#     to absolute zero or by zeroing a material constant.
+# Overriding a gate does NOT defeat the physics: `trn: true` with T_k = 0 still
+# yields exact zeros (zero thermodynamic variance), and `tccr: true` with
+# r33 = 0 still yields exact zeros (zero coefficient).
+#
+# Every legacy key below is kept verbatim as a deprecated alias so existing
+# configs and sidecars keep loading.
 #
 # NB: the switch values below record the CURRENT EFFECTIVE state of this device
 # config, so adding this block changes no numerical output. `trn`/`pyro_eo` are

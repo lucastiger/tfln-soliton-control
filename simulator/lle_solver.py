@@ -71,18 +71,44 @@ def _noise_block_from_yaml(config_path: str | Path | None = None) -> dict[str, A
     return dict(block)
 
 
-def _legacy_noise_values(physical: dict[str, Any]) -> dict[str, Any]:
-    """NoiseConfig field values implied by the DEPRECATED physical_parameters keys.
+def _legacy_implicit_gates(physical: dict[str, Any]) -> dict[str, Any]:
+    """Channel states implied by PHYSICAL constants rather than by any switch.
 
-    Only keys actually present in the mapping contribute, so this layer never
-    invents a value — that is what makes the precedence chain in
-    :func:`_resolve_noise_flags` well-defined.
+    These sit BELOW the ``noise:`` block in the precedence chain. They exist so
+    that a config predating the block still resolves to its historical
+    behaviour; once a block is present it is free to override them, which is the
+    whole point of giving these three channels a real switch.
 
-    The implicit gates are reproduced exactly as ``simulator.noise_models``
-    resolves them: ``T_k > 0`` for the two temperature-driven channels, and a
-    non-zero ``eo_r33_m_per_v`` for TCCR (which carries no T_k factor at all —
-    the reason the historical "T_k = 0 means noise off" convention never
-    silenced TCCR on chi2 platforms).
+    Reproduced exactly as ``simulator.noise_models`` resolves them: ``T_k > 0``
+    for the two temperature-driven channels, and a non-zero ``eo_r33_m_per_v``
+    for TCCR (which carries no T_k factor at all — the reason the historical
+    "T_k = 0 means noise off" convention never silenced TCCR on chi2 platforms).
+
+    Overriding a gate here does NOT defeat the underlying physics: the constants
+    still act downstream, so ``noise.trn = true`` with ``T_k = 0`` still yields
+    exact zeros (zero thermodynamic variance), and ``tccr = true`` with
+    ``r33 = 0`` still yields exact zeros (zero coefficient).
+    """
+    values: dict[str, Any] = {}
+    if "T_k" in physical:
+        warm = float(physical["T_k"]) > 0.0
+        values["trn"] = warm
+        values["pyro_eo"] = warm
+    if "eo_r33_m_per_v" in physical:
+        values["tccr"] = float(physical["eo_r33_m_per_v"]) != 0.0
+    return values
+
+
+def _legacy_explicit_switches(physical: dict[str, Any]) -> dict[str, Any]:
+    """Values from the DEPRECATED but EXPLICIT physical_parameters keys.
+
+    These sit ABOVE the ``noise:`` block: a key a user actually wrote into
+    ``physical_parameters`` is an explicit instruction and must not be silently
+    overruled by a block that arrived via a config round-trip. That ordering is
+    what keeps every pre-existing sidecar-based test working.
+
+    Only keys actually present contribute, so this layer never invents a value.
+    Migration path: delete the legacy key and the block takes over.
     """
     values: dict[str, Any] = {}
     for legacy_key, targets in LEGACY_SWITCH_KEYS.items():
@@ -90,12 +116,6 @@ def _legacy_noise_values(physical: dict[str, Any]) -> dict[str, Any]:
             on = bool(int(physical[legacy_key]))
             for target in targets:
                 values[target] = on
-    if "T_k" in physical:
-        warm = float(physical["T_k"]) > 0.0
-        values["trn"] = warm
-        values["pyro_eo"] = warm
-    if "eo_r33_m_per_v" in physical:
-        values["tccr"] = float(physical["eo_r33_m_per_v"]) != 0.0
     for legacy_key, target in LEGACY_PARAMETER_KEYS.items():
         if legacy_key in physical:
             value = physical[legacy_key]
@@ -134,16 +154,27 @@ def _resolve_noise_flags(
          ``None`` meaning "not supplied");
       2. a ``noise_config`` object — being a dataclass it carries a value for
          EVERY field, so passing one overrides the whole YAML block by design;
-      3. the top-level ``noise:`` block of the config file;
-      4. the deprecated ``physical_parameters`` switches;
-      5. the ``NoiseConfig`` field defaults.
+      3. an EXPLICIT deprecated switch in ``physical_parameters``
+         (``quantum_noise_enabled``, ``pump_noise_enabled``,
+         ``fsr_noise_enabled``, and the legacy parameter aliases);
+      4. the top-level ``noise:`` block of the config file;
+      5. an IMPLICIT physical gate (``T_k > 0``, ``eo_r33_m_per_v != 0``);
+      6. the ``NoiseConfig`` field defaults.
+
+    Levels 3 and 5 are both "legacy", deliberately split around the block. A key
+    a user actually WROTE is an explicit instruction and outranks a block that
+    may have arrived through a config round-trip — that is what keeps existing
+    sidecar-based callers working. An implicit physical gate is not an
+    instruction at all, so the block outranks it, which is what gives the three
+    previously switch-less channels (trn / pyro_eo / tccr) a real switch.
 
     All precedence logic lives here and nowhere else. The resolved config is
     logged once per call at DEBUG level.
     """
     values: dict[str, Any] = {}
-    values.update(_legacy_noise_values(physical))                  # 4
-    values.update(_noise_block_from_yaml(config_path))             # 3
+    values.update(_legacy_implicit_gates(physical))                 # 5
+    values.update(_noise_block_from_yaml(config_path))              # 4
+    values.update(_legacy_explicit_switches(physical))              # 3
     if noise_config is not None:                                   # 2
         values.update(noise_config.to_dict())
     for kwarg, fields in _KWARG_TO_FIELDS.items():                 # 1
@@ -971,8 +1002,13 @@ def _detuning_noise_sequences(
     """
     from simulator.noise_models import TotalNoise, _load_config as _nm_load_cfg
 
-    # noise_config=None keeps the legacy per-channel rules => bit-identical.
-    _noise_model = TotalNoise(_nm_load_cfg(config_path), noise_config=noise_config)
+    _physical = _nm_load_cfg(config_path)
+    if noise_config is None:
+        # Resolve from the file itself (noise: block + legacy keys). Doing it
+        # HERE lets the solver keep the pinned 3-argument call surface that
+        # tests/test_dataset_generator.py::test_key_isolation spies on.
+        noise_config = _resolve_noise_flags(_physical, config_path)
+    _noise_model = TotalNoise(_physical, noise_config=noise_config)
     if _noise_model.is_colored:
         rows = [
             np.asarray(_noise_model.sample(k, int(t_slow)))
@@ -1004,8 +1040,13 @@ def _delta_t_sequences(
     """
     from simulator.noise_models import TotalNoise, _load_config as _nm_load_cfg
 
-    # noise_config=None keeps the legacy per-channel rules => bit-identical.
-    _noise_model = TotalNoise(_nm_load_cfg(config_path), noise_config=noise_config)
+    _physical = _nm_load_cfg(config_path)
+    if noise_config is None:
+        # Resolve from the file itself (noise: block + legacy keys). Doing it
+        # HERE lets the solver keep the pinned 3-argument call surface that
+        # tests/test_dataset_generator.py::test_key_isolation spies on.
+        noise_config = _resolve_noise_flags(_physical, config_path)
+    _noise_model = TotalNoise(_physical, noise_config=noise_config)
     if _noise_model.is_colored:
         rows = [
             np.asarray(_noise_model.sample_with_delta_t(k, int(t_slow))[1])
@@ -1576,8 +1617,9 @@ def solve_lle_ssfm_jax(
     qnoise_keys = jax.random.split(key_qnoise_inj, delta_arr.shape[0])
 
     # --- Generate per-trajectory noise sequences (see _detuning_noise_sequences) ---
+    _nc_kw = {} if noise_config is None else {"noise_config": resolved_noise}
     noise_sequences = _detuning_noise_sequences(
-        noise_keys, int(t_slow), config_path, noise_config=resolved_noise
+        noise_keys, int(t_slow), config_path, **_nc_kw
     )  # (n_traj, t_slow)
 
     n_traj = delta_arr.shape[0]
@@ -1690,7 +1732,7 @@ def solve_lle_ssfm_jax(
         _d1 = 2.0 * math.pi * thermal["fsr_hz"]              # rad/s
         _omega0_fsr = 2.0 * math.pi * 299_792_458.0 / thermal["pump_wavelength_m"]
         _dt_seqs = _delta_t_sequences(
-            noise_keys, int(t_slow), config_path, noise_config=resolved_noise
+            noise_keys, int(t_slow), config_path, **_nc_kw
         )
         fsr_noise_sequences = (
             (_d1 / _omega0_fsr) * _trn.c_pull * _dt_seqs
