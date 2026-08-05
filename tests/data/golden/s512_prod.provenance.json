@@ -1,0 +1,92 @@
+{
+  "arrays": {
+    "E_final": {
+      "dtype": "complex128",
+      "shape": [
+        1,
+        512
+      ]
+    },
+    "E_snapshots": {
+      "dtype": "complex128",
+      "shape": [
+        1,
+        500,
+        512
+      ]
+    },
+    "U_int_history": {
+      "dtype": "float64",
+      "shape": [
+        1,
+        5000
+      ]
+    },
+    "delta_T_history": {
+      "dtype": "float64",
+      "shape": [
+        1,
+        5000
+      ]
+    }
+  },
+  "environment": {
+    "jax_default_backend": "cpu",
+    "jax_devices": [
+      "cpu:0"
+    ],
+    "jax_platforms_env": null,
+    "machine": "x86_64",
+    "platform": "Linux-6.18.5-fc-v18-x86_64-with-glibc2.39"
+  },
+  "git_commit": "3f9823b2cef7c73dc734feaca1344fc785ef92b5",
+  "inputs": {
+    "config": "config/sin_params.yaml",
+    "config_sha256": "8658725ccda8f6f35acd4f40111de3259cb67f8d2c1f5becea15e6854f1bcd1c",
+    "dispersion_csv": "config/pyLLE_dispersion_w4400_h800.csv",
+    "dispersion_csv_sha256": "a3cea56838809c4ea525355bf3dd8eb12a30bf51c0df9c21fecdb1e79b2a18e7"
+  },
+  "noise_config": {
+    "fsr": false,
+    "legacy_segment_noise": true,
+    "noise_dtype": "float32",
+    "pump_freq_noise": false,
+    "pump_rin": false,
+    "pyro_eo": false,
+    "quantum_injection_cadence": 0,
+    "quantum_seed_vacuum_init": true,
+    "quantum_vacuum": false,
+    "seed": null,
+    "tccr": false,
+    "thermal_feedback": false,
+    "thermal_integrator": "euler",
+    "trn": false,
+    "trn_ar1_stationary_init": false,
+    "trn_psd_model": "single_pole"
+  },
+  "noise_config_sha256": "48261c63e68c1287a282981387256c593e4d5a6ad91a3ad11ef35da20d425b4f",
+  "param_set": {
+    "dw_over_kappa": 10.0,
+    "n_substeps": 1,
+    "n_tau": 512,
+    "name": "s512_prod",
+    "t_slow": 5000
+  },
+  "seed": 0,
+  "solver": {
+    "beta2_s": 1.5779783174081465e-18,
+    "delta_omega_rad_per_s": 1518800000.0,
+    "detuning_convention": "delta_omega = omega_res - omega_pump",
+    "entry_point": "simulator.lle_solver.solve_lle_ssfm_jax",
+    "kappa_c_rad_per_s": 121500000.0,
+    "kappa_rad_per_s": 151880000.0,
+    "pin_w": 0.214,
+    "snapshot_interval": 10
+  },
+  "versions": {
+    "jax": "0.10.2",
+    "jaxlib": "0.10.2",
+    "numpy": "2.4.6",
+    "python": "3.11.15"
+  }
+}
