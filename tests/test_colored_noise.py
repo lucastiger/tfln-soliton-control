@@ -40,7 +40,10 @@ from simulator.colored_noise import (
     single_pole_psd,
     synthesize_from_psd,
 )
+from simulator.noise_config import NoiseConfig
 from simulator.noise_models import (
+    PyroEONoise,
+    TCCRNoise,
     TotalNoise,
     TRNoise,
     _load_config as nm_load_cfg,
@@ -536,3 +539,178 @@ def test_legacy_segment_noise_default_and_batch_paths(tmp_path):
         assert res_l[k].shape == res_c[k].shape, k
     assert np.isfinite(res_c["U_int"]).all()
     assert not np.array_equal(res_l["U_int"], res_c["U_int"])
+
+
+# ---------------------------------------------------------------------------
+# (7) Explicit per-channel enables (TRN / pyro-EO / TCCR)
+#
+# The channels used to be silenced only implicitly — TRN via T_k = 0 ("0 kelvin
+# ambient"), pyro-EO/TCCR via r33 = 0. These pin the explicit switches AND the
+# invariant that flipping one channel never disturbs another channel's stream.
+# ---------------------------------------------------------------------------
+
+# A chi2-like (TFLN) config: r33 != 0 makes pyro-EO and TCCR genuinely non-zero,
+# so the cross-channel tests below are not vacuously true (on the committed SiN
+# config sigma_tccr == 0 and every TCCR sample is zero whatever the switch says).
+_CHI2_OVERRIDES = {
+    "eo_r33_m_per_v": 3.1e-11,
+    "pyroelectric_coeff_c_per_m2_k": 9.6e-2,
+}
+
+
+def _chi2_cfg():
+    return {**nm_load_cfg(None), **_CHI2_OVERRIDES}
+
+
+def test_trn_disabled_returns_exact_zeros():
+    """enabled=False => exact zeros from every sampler, for every PSD model."""
+    base = nm_load_cfg(None)
+    geo = {"trn_R_m": 100e-6, "trn_da_m": 2.0e-6, "trn_db_m": 8.0e-7}
+    models = (
+        {"trn_psd_model": "single_pole"},
+        {"trn_psd_model": "kondratiev_gorodetsky", **geo},
+    )
+    key = jax.random.PRNGKey(4242)
+    f = np.logspace(3, 9, 128)
+
+    for model_kw in models:
+        cfg = {**base, **model_kw}
+        on = TRNoise(cfg)                      # legacy rule: T_k = 300 -> enabled
+        off = TRNoise(cfg, enabled=False)
+        assert on.enabled is True and off.enabled is False
+
+        for n in (1, 2, 1024):
+            s = off.sample(key, n)
+            assert s.shape == (n,)
+            assert np.all(np.asarray(s) == 0.0), model_kw
+            # dtype must match the enabled path exactly (float32 AR(1) / float64 colored)
+            assert s.dtype == on.sample(key, n).dtype, model_kw
+
+            dt = off.sample_delta_t(key, n)
+            assert dt.shape == (n,) and dt.dtype == np.float64
+            assert np.all(dt == 0.0), model_kw
+
+        assert np.all(np.asarray(off.psd(f)) == 0.0), model_kw
+        # and the enabled channel is genuinely non-zero, so the above is meaningful
+        assert float(np.std(np.asarray(on.sample(key, 1024)))) > 0.0, model_kw
+
+    # same contract for the other two channels (chi2 config so they are live)
+    cfg2 = _chi2_cfg()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for cls in (PyroEONoise, TCCRNoise):
+            on, off = cls(cfg2), cls(cfg2, enabled=False)
+            assert on.enabled is True and off.enabled is False
+            assert np.all(np.asarray(off.sample(key, 512)) == 0.0), cls.__name__
+            assert off.sample(key, 512).dtype == on.sample(key, 512).dtype
+            assert np.all(np.asarray(off.psd(f)) == 0.0), cls.__name__
+            assert float(np.std(np.asarray(on.sample(key, 512)))) > 0.0, cls.__name__
+
+
+def test_disabling_trn_does_not_shift_tccr_stream():
+    """Toggling TRN must leave the TCCR stream bit-identical for the same key.
+
+    This is the key-chain invariant: the split in sample_with_delta_t is
+    unconditional, so the TCCR subkey does not depend on whether the thermal
+    branch consumed a draw.
+    """
+    cfg = _chi2_cfg()
+    key = jax.random.PRNGKey(31337)
+    n = 2048
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        trn_on = TotalNoise(cfg, noise_config=NoiseConfig(
+            trn=True, pyro_eo=False, tccr=True))
+        trn_off = TotalNoise(cfg, noise_config=NoiseConfig(
+            trn=False, pyro_eo=False, tccr=True))
+        comb_on, dt_on = trn_on.sample_with_delta_t(key, n)
+        comb_off, dt_off = trn_off.sample_with_delta_t(key, n)
+
+    # TRN off => dT identically zero; TRN on => genuinely fluctuating
+    assert np.all(np.asarray(dt_off) == 0.0)
+    assert float(np.std(np.asarray(dt_on))) > 0.0
+
+    # With pyro off and TRN off, the combined sequence IS the TCCR stream; with TRN
+    # on it is TCCR + c_pull*dT. Recover TCCR from the TRN-on run and compare.
+    tccr_from_off = np.asarray(comb_off, dtype=np.float64)
+    tccr_direct = np.asarray(
+        trn_on.tccr.sample(jax.random.split(key, 2)[1], n), dtype=np.float64
+    )
+    assert np.array_equal(tccr_from_off, tccr_direct), (
+        "TCCR stream changed when TRN was disabled"
+    )
+    assert float(np.std(tccr_direct)) > 0.0, "TCCR must be non-trivial here"
+
+    # the TCCR subkey itself is independent of the TRN switch
+    assert np.array_equal(
+        np.asarray(trn_on.tccr.sample(jax.random.split(key, 2)[1], n)),
+        np.asarray(trn_off.tccr.sample(jax.random.split(key, 2)[1], n)),
+    )
+
+
+def test_fsr_without_trn_warns_and_is_zero():
+    """fsr=True with trn=False is almost certainly a user error: warn, and dT == 0."""
+    cfg = nm_load_cfg(None)
+    with pytest.warns(UserWarning, match="identically zero FSR noise"):
+        tn = TotalNoise(cfg, noise_config=NoiseConfig(trn=False, fsr=True))
+
+    _comb, dt = tn.sample_with_delta_t(jax.random.PRNGKey(5), 1024)
+    # FSR is dD1(t) = (D1/omega0)*C_pull*dT(t): a zero dT makes it identically zero.
+    assert np.all(np.asarray(dt) == 0.0)
+
+    full, dt_full = tn.sample_full_with_delta_t(jax.random.PRNGKey(5), 1024)
+    assert np.all(dt_full == 0.0) and np.all(full == 0.0)
+
+    # the sane combinations do NOT warn
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        TotalNoise(cfg, noise_config=NoiseConfig(trn=True, fsr=True))
+        TotalNoise(cfg, noise_config=NoiseConfig(trn=False, fsr=False))
+
+
+@pytest.mark.parametrize("t_k", [300.0, 0.0])
+def test_enabled_none_reproduces_legacy_bitwise(t_k):
+    """enabled=None reproduces the pre-change implicit gating BIT-FOR-BIT.
+
+    Rebuilt from the inline legacy AR(1) (``_legacy_ar1``), the same reference the
+    pre-existing single-pole bit-identity test uses. Covers both sides of the old
+    implicit rule: T_k = 300 (channel live) and T_k = 0 (channel silent).
+    """
+    cfg = {**nm_load_cfg(None), "T_k": t_k}
+    key = jax.random.PRNGKey(20260805)
+    n = 2048
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        tn = TotalNoise(cfg)                      # noise_config=None => legacy rules
+
+    # the legacy rule is exactly "T_k > 0" for the two temperature-driven channels
+    assert tn.trn.enabled is (t_k > 0.0)
+    assert tn.pyroeo.enabled is (t_k > 0.0)
+    assert tn.tccr.enabled is False               # SiN: r33 = 0 => sigma_tccr = 0
+
+    key_thermal, key_tccr = jax.random.split(key, 2)
+    temp = _legacy_ar1(key_thermal, n, tn.tau_th,
+                       math.sqrt(tn.var_delta_t), tn.t_r)
+    trn = (tn.omega_0 / tn.n0 * tn.dn_dT) * temp
+    pyro = (tn.omega_0 * tn.n0**2 * tn.r33 * tn.p
+            / (2.0 * tn.eps0 * tn.eps_r_eff)) * temp
+    tccr = _legacy_ar1(key_tccr, n, tn.tccr.tau_carrier,
+                       tn.tccr.sigma_tccr, tn.t_r)
+    legacy_combined = np.asarray((trn - pyro + tccr).astype(jnp.float32))
+
+    combined, delta_t = tn.sample_with_delta_t(key, n)
+    assert np.array_equal(np.asarray(combined), legacy_combined)
+    assert np.array_equal(np.asarray(tn.sample(key, n)), legacy_combined)
+    assert np.asarray(combined).dtype == legacy_combined.dtype
+
+    # dT: the legacy stream upcast to float64 under the solver's x64 mode
+    assert np.array_equal(
+        np.asarray(delta_t), np.asarray(temp, dtype=np.float64)
+    )
+
+    if t_k == 0.0:
+        assert np.all(legacy_combined == 0.0)     # old code already returned zeros
+    else:
+        assert float(np.std(legacy_combined)) > 0.0
