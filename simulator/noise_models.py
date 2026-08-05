@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,50 @@ _DEF_CFG_PATH = Path(__file__).resolve().parents[1] / "config" / "sin_params.yam
 # via simulator.colored_noise (FFT synthesis from the target PSD).
 _TRN_PSD_MODELS = ("single_pole", "kondratiev_gorodetsky", "csv")
 _TRN_CSV_UNITS = ("S_delta_T", "S_delta_omega")
+
+
+def _resolve_enabled(enabled, legacy_rule: bool, name: str) -> bool:
+    """Resolve a channel's ``enabled`` switch, defaulting to the legacy rule.
+
+    ``enabled=None`` (the default everywhere) reproduces the historical, IMPLICIT
+    gating exactly — the channel is on whenever the old code would have produced a
+    non-zero sequence, and off precisely where the old code already produced exact
+    zeros. An explicit ``True``/``False`` (or 0/1, matching the repository's numeric
+    config convention) overrides it.
+
+    Making the switch explicit is a readability fix, not a physics change: "T_k = 0"
+    literally means "0 kelvin ambient", which is a nonsense way to spell "no
+    thermorefractive noise".
+    """
+    if enabled is None:
+        return bool(legacy_rule)
+    if not isinstance(enabled, (bool, int, np.integer)) or int(enabled) not in (0, 1):
+        raise ValueError(
+            f"{name}: enabled must be boolean-valued (bool or 0/1), got {enabled!r}."
+        )
+    return bool(int(enabled))
+
+
+def _zeros(n, dtype) -> jnp.ndarray:
+    """Exact zeros of the shape/dtype a disabled sampler must return.
+
+    A disabled channel returns these WITHOUT touching any RNG. That is safe for the
+    key chain because JAX PRNG is functional: consuming a key produces no side effect,
+    so skipping a draw cannot shift any other channel's stream. The split ladder
+    itself is what must stay fixed — see ``TotalNoise.sample_with_delta_t``.
+
+    The dtype is canonicalized so that with jax_enable_x64 OFF a requested float64
+    degrades to float32 exactly as the ENABLED path's own arrays do — same dtype,
+    no spurious truncation warning.
+    """
+    return jnp.zeros((int(n),), dtype=jax.dtypes.canonicalize_dtype(dtype))
+
+
+def _zeros_psd(f) -> jnp.ndarray:
+    """Zero PSD matching the shape/dtype the enabled ``psd()`` would return."""
+    return jnp.zeros_like(
+        jnp.asarray(f, dtype=jax.dtypes.canonicalize_dtype(np.float64))
+    )
 
 
 def _resolve_trn_psd_model(cfg) -> str:
@@ -166,7 +211,7 @@ class TRNoise:
     traced AR(1) path.
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, enabled: bool | None = None):
         self.cfg = cfg
         self.t_r = 1.0 / float(cfg.get("fsr_hz", 2.0e11))
         self.omega_0 = 2.0 * math.pi * 299_792_458.0 / float(cfg.get("pump_wavelength_m", 1.55e-6))
@@ -196,10 +241,20 @@ class TRNoise:
             cfg, self.psd_model, self.c_pull, self.f_s,
             self.var_delta_t, self.tau_th,
         )
+        # Explicit switch. Legacy rule: the channel was live iff the thermodynamic
+        # variance k_B*T_k^2/(rho*Cp*V) was non-zero, i.e. iff T_k > 0. At T_k = 0 the
+        # old code still ran the generator but every sample was exactly 0.0, so
+        # enabled=None is bit-identical to the old behaviour on BOTH sides of the rule.
+        self.enabled = _resolve_enabled(enabled, self.T_k > 0.0, "TRNoise")
 
     @property
     def is_colored(self) -> bool:
         return self.psd_model != "single_pole"
+
+    @property
+    def _sample_dtype(self):
+        """dtype of :meth:`sample` — float32 on the legacy AR(1) path, else float64."""
+        return jnp.float64 if self.is_colored else jnp.float32
 
     def sample_delta_t(self, key, N) -> np.ndarray:
         """Host-side float64 dT(t) sequence, (N,), from the selected PSD.
@@ -208,11 +263,17 @@ class TRNoise:
         twin), stationary from sample 0 — this is the sequence the
         segment-continuity path slices. NOT the byte-compatible AR(1) stream
         (that one lives in :meth:`sample` for ``single_pole``).
+
+        Disabled: exact float64 zeros, no RNG draw.
         """
+        if not self.enabled:
+            return np.zeros(int(N), dtype=np.float64)
         rng = np_generator_from_key(key)
         return synthesize_from_psd(rng, int(N), self.delta_t_psd, self.f_s)
 
     def sample(self, key, N) -> jnp.ndarray:
+        if not self.enabled:
+            return _zeros(N, self._sample_dtype)
         if not self.is_colored:
             return _ar1_samples(key, N, self.tau_th, self.sigma_trn, self.t_r)
         return jnp.asarray(self.c_pull * self.sample_delta_t(key, N),
@@ -220,6 +281,8 @@ class TRNoise:
 
     def psd(self, f) -> jnp.ndarray:
         """One-sided S_domega(f) [(rad/s)^2/Hz] of the selected model."""
+        if not self.enabled:
+            return _zeros_psd(f)
         if not self.is_colored:
             s_delta_t = (
                 (4.0 * self.k_b * self.T_k**2 * self.tau_th) / (self.rho * self.cp * self.v)
@@ -233,7 +296,7 @@ class TRNoise:
 
 
 class PyroEONoise:
-    def __init__(self, cfg):
+    def __init__(self, cfg, enabled: bool | None = None):
         self.cfg = cfg
         self.t_r = 1.0 / float(cfg.get("fsr_hz", 2.0e11))
         self.omega_0 = 2.0 * math.pi * 299_792_458.0 / float(cfg.get("pump_wavelength_m", 1.55e-6))
@@ -283,12 +346,25 @@ class PyroEONoise:
             cfg, self.psd_model, _c_pull, self.f_s,
             self.var_delta_t, self.tau_th,
         )
+        # Explicit switch. Legacy rule: this channel is temperature-driven, so it was
+        # live iff T_k > 0 — the SAME rule as TRNoise. (A zero pyro/EO coefficient,
+        # e.g. r33 = 0 on centrosymmetric SiN, independently makes every sample 0.0;
+        # that is a material fact, not a switch, so it is deliberately NOT folded in
+        # here. enabled=None therefore stays bit-identical either way.)
+        self.enabled = _resolve_enabled(enabled, self.T_k > 0.0, "PyroEONoise")
 
     @property
     def is_colored(self) -> bool:
         return self.psd_model != "single_pole"
 
+    @property
+    def _sample_dtype(self):
+        """dtype of :meth:`sample` — float32 on the legacy AR(1) path, else float64."""
+        return jnp.float64 if self.is_colored else jnp.float32
+
     def sample(self, key, N) -> jnp.ndarray:
+        if not self.enabled:
+            return _zeros(N, self._sample_dtype)
         if not self.is_colored:
             return _ar1_samples(key, N, self.tau_th, self.sigma_pyroeo, self.t_r)
         rng = np_generator_from_key(key)
@@ -296,6 +372,8 @@ class PyroEONoise:
         return jnp.asarray(self.pyro_coeff * delta_t, dtype=jnp.float64)
 
     def psd(self, f) -> jnp.ndarray:
+        if not self.enabled:
+            return _zeros_psd(f)
         if not self.is_colored:
             s_delta_t = (
                 (4.0 * self.k_b * self.T_k**2 * self.tau_th) / (self.rho * self.cp * self.v)
@@ -307,7 +385,7 @@ class PyroEONoise:
 
 
 class TCCRNoise:
-    def __init__(self, cfg):
+    def __init__(self, cfg, enabled: bool | None = None):
         self.t_r         = 1.0 / float(cfg.get("fsr_hz", 2.0e11))
         self.omega_0     = 2.0 * math.pi * 299_792_458.0 / float(cfg.get("pump_wavelength_m", 1.55e-6))
         self.tau_carrier = float(cfg.get("tau_carrier_s", 1.0e-7))
@@ -363,11 +441,23 @@ class TCCRNoise:
                 stacklevel=2,
             )
 
+        # Explicit switch. Legacy rule: TCCR was silenced ONLY by a zero EO
+        # coefficient (r33 = 0 => dw_dNs = 0 => s0_tccr = 0 => sigma_tccr = 0), in
+        # which case the old AR(1) already returned exact zeros. Note this channel is
+        # NOT gated by T_k — its variance carries no T_k factor — which is exactly why
+        # the T_k=0 "noise-off" convention never silenced it on chi2 platforms.
+        self.enabled = _resolve_enabled(
+            enabled, self.sigma_tccr > 0.0, "TCCRNoise"
+        )
 
     def sample(self, key, N) -> jnp.ndarray:
+        if not self.enabled:
+            return _zeros(N, jnp.float32)
         return _ar1_samples(key, N, self.tau_carrier, self.sigma_tccr, self.t_r)
 
     def psd(self, f) -> jnp.ndarray:
+        if not self.enabled:
+            return _zeros_psd(f)
         return self.s0_tccr / (1.0 + (2.0 * jnp.pi * f * self.tau_carrier) ** 2)
 
 
@@ -392,11 +482,34 @@ class TotalNoise:
         full-trajectory-then-slice mode of the dataset generator.
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, noise_config=None):
+        """Build the combined channel.
+
+        Args:
+            cfg: the ``physical_parameters`` mapping.
+            noise_config: optional :class:`simulator.noise_config.NoiseConfig`. When
+                ``None`` (the default) every sub-channel resolves its own switch from
+                the legacy rule, so behaviour is EXACTLY as before this parameter
+                existed. When supplied, each sub-channel's ``enabled`` comes from the
+                corresponding field (``trn``, ``pyro_eo``, ``tccr``).
+        """
         self.cfg = cfg
-        self.trn = TRNoise(cfg)
-        self.pyroeo = PyroEONoise(cfg)
-        self.tccr = TCCRNoise(cfg)
+        self.noise_config = noise_config
+        if noise_config is None:
+            trn_enabled = pyro_enabled = tccr_enabled = None
+        else:
+            trn_enabled = bool(noise_config.trn)
+            pyro_enabled = bool(noise_config.pyro_eo)
+            tccr_enabled = bool(noise_config.tccr)
+            if noise_config.fsr and not noise_config.trn:
+                warnings.warn(
+                    "fsr=True with trn=False produces identically zero FSR noise "
+                    "because both are driven by the same delta_T realization.",
+                    stacklevel=2,
+                )
+        self.trn = TRNoise(cfg, enabled=trn_enabled)
+        self.pyroeo = PyroEONoise(cfg, enabled=pyro_enabled)
+        self.tccr = TCCRNoise(cfg, enabled=tccr_enabled)
         self.t_r = self.trn.t_r
         self.omega_0 = self.trn.omega_0
         self.n0 = self.trn.n0
@@ -432,8 +545,18 @@ class TotalNoise:
         branch is fully traceable (vmap-safe); colored models synthesize on
         the HOST and must be looped, not vmapped.
         """
+        # CRITICAL: this split is UNCONDITIONAL. It must happen regardless of which
+        # channels are enabled, so that enabling or disabling one channel never
+        # shifts another channel's random stream. Never move it inside a branch,
+        # never change its arity, and never reorder the subkeys.
         key_thermal, key_tccr = jax.random.split(key, 2)
-        if not self.is_colored:
+        if not self.trn.enabled:
+            # dT is the SHARED realization behind TRN, pyro-EO and FSR: with the
+            # thermorefractive channel off there is no temperature fluctuation at all,
+            # so all three collapse to zero. No RNG is drawn (safe: JAX PRNG is
+            # functional, so a skipped draw cannot perturb key_tccr above).
+            temp_noise = _zeros(N, jnp.float64 if self.is_colored else jnp.float32)
+        elif not self.is_colored:
             temp_noise = _ar1_samples(
                 key_thermal, N, self.tau_th, math.sqrt(self.var_delta_t), self.t_r
             )
@@ -443,8 +566,9 @@ class TotalNoise:
                 synthesize_from_psd(rng, int(N), self.delta_t_psd, self.f_s),
                 dtype=jnp.float64,
             )
-        trn_noise = self.c_pull * temp_noise
-        pyroeo_noise = self.pyro_coeff * temp_noise
+        # With both channels enabled these are exactly the historical expressions.
+        trn_noise = (self.c_pull if self.trn.enabled else 0.0) * temp_noise
+        pyroeo_noise = (self.pyro_coeff if self.pyroeo.enabled else 0.0) * temp_noise
         tccr_noise = self.tccr.sample(key_tccr, N)
 
         # Sign convention: PyroEO *partially cancels* TRN for z-cut TFLN with
@@ -472,11 +596,19 @@ class TotalNoise:
         synthesizes from its single-pole PSD (independent stream from the
         second subkey). Returns numpy float64 arrays, shape (N,) each.
         """
+        # CRITICAL: unconditional split — see sample_with_delta_t. Toggling a channel
+        # must never shift another channel's stream.
         key_thermal, key_tccr = jax.random.split(key, 2)
-        rng_t = np_generator_from_key(key_thermal)
-        delta_t = synthesize_from_psd(rng_t, int(N), self.delta_t_psd, self.f_s)
-        combined = (self.c_pull - self.pyro_coeff) * delta_t
-        if self.tccr.sigma_tccr > 0.0:
+        if self.trn.enabled:
+            rng_t = np_generator_from_key(key_thermal)
+            delta_t = synthesize_from_psd(rng_t, int(N), self.delta_t_psd, self.f_s)
+        else:
+            delta_t = np.zeros(int(N), dtype=np.float64)
+        combined = (
+            (self.c_pull if self.trn.enabled else 0.0)
+            - (self.pyro_coeff if self.pyroeo.enabled else 0.0)
+        ) * delta_t
+        if self.tccr.enabled and self.tccr.sigma_tccr > 0.0:
             rng_c = np_generator_from_key(key_tccr)
             tccr_psd = single_pole_psd(self.tccr.var_tccr, self.tau_carrier)
             combined = combined + synthesize_from_psd(
