@@ -12,6 +12,7 @@ import functools
 import logging
 import math
 import warnings
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -37,13 +38,21 @@ from simulator.noise_config import (
     LEGACY_SWITCH_KEYS,
     NoiseConfig,
 )
+from simulator.provenance import (
+    ARXIV_REF,
+    config_block_sha256,
+    env_fingerprint,
+    noise_config_sha256,
+)
+from simulator.provenance import _GIT_COMMIT_SHORT as _PROVENANCE_GIT_COMMIT
 from simulator.state_labeler import (
     make_state_labeler,
     make_threshold_params,
     physical_off_floor,
 )
 
-_DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "sin_params.yaml"
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_DEFAULT_CONFIG_PATH = _REPO_ROOT / "config" / "sin_params.yaml"
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -258,6 +267,56 @@ def d3_to_beta3_lle(d3_rad_per_s3: float, fsr_hz: float) -> float:
     """Convert D3 [rad/s³] to LLE beta_3 [s²].  See d2_to_beta2_lle."""
     d1 = 2.0 * math.pi * fsr_hz
     return d3_rad_per_s3 / d1 ** 3
+
+
+def _provenance_caller() -> str:
+    """Repo-relative path:lineno of the first frame outside this module.
+
+    Falls back to ``"<unknown>"`` rather than raising: the stamp is
+    bookkeeping and must never be able to fail a solve that has already
+    produced its physics.
+    """
+    try:
+        import inspect
+
+        this_file = str(Path(__file__).resolve())
+        for frame in inspect.stack()[1:]:
+            filename = str(Path(frame.filename).resolve())
+            if filename == this_file:
+                continue
+            try:
+                rel = str(Path(filename).relative_to(_REPO_ROOT))
+            except ValueError:
+                rel = filename
+            return f"{rel}:{frame.lineno}"
+    except Exception:
+        pass
+    return "<unknown>"
+
+
+def _provenance_seed(rng_key: Any, resolved_noise: "NoiseConfig") -> int:
+    """The run's seed, for the provenance stamp.
+
+    ``NoiseConfig.seed`` when the caller declared one (that is the run's
+    documented seed); otherwise it is recovered from the JAX key itself, whose
+    last uint32 word is the integer passed to ``jax.random.PRNGKey`` for the
+    default threefry implementation. A folded/split key has no "seed" in the
+    original sense, but the recovered word still identifies the key stream
+    deterministically, which is what the stamp needs.
+    """
+    if getattr(resolved_noise, "seed", None) is not None:
+        return int(resolved_noise.seed)
+    try:
+        data = np.asarray(jax.random.key_data(rng_key))
+    except Exception:
+        try:
+            data = np.asarray(rng_key)
+        except Exception:
+            return -1
+    try:
+        return int(np.ravel(data)[-1])
+    except Exception:
+        return -1
 
 
 def _load_config(config_path: str | Path | None = None) -> dict[str, Any]:
@@ -1115,6 +1174,7 @@ def solve_lle_ssfm_jax(
     fsr_delta_d1_override: np.ndarray | jnp.ndarray | None = None,
     mode_probe_indices: tuple[int, ...] | list[int] | None = None,
     noise_config: NoiseConfig | None = None,
+    provenance: bool = False,
 ) -> dict[str, np.ndarray]:
     """Batch-capable SSFM solver for the generalized LLE using JAX.
 
@@ -1320,6 +1380,19 @@ def solve_lle_ssfm_jax(
             is <= 128 MB. Cost: ONE dedicated jnp.fft.fft of the
             end-of-round-trip field per round trip, traced only when probes
             are requested (default None/() = no probes, zero extra ops).
+        provenance: If True, attach a ``"provenance"`` entry to the returned
+            dict recording HOW this run was produced (see
+            :mod:`simulator.provenance`): calling script, git commit, hashes of
+            the resolved ``physical_parameters`` block and of the resolved
+            :class:`~simulator.noise_config.NoiseConfig`, the seed, an
+            environment fingerprint (JAX/BLAS/backend/device) and the pinned
+            arXiv reference. Default False, which leaves the returned dict
+            unchanged key-for-key — the golden whole-dict hash in
+            ``tests/test_regression_figures.py`` and the array manifests in
+            ``validation/noise_off_identity.py`` assume the legacy key set, and
+            the stamp carries a wall-clock timestamp so it is not reproducible
+            by construction. Purely bookkeeping: it adds no RNG calls and no
+            arithmetic, so the physics is bit-identical either way.
 
     Returns:
         Dictionary containing requested histories. When pump noise is active
@@ -1914,6 +1987,22 @@ def solve_lle_ssfm_jax(
         result["pump_rin_epsilon_history"] = pump_rin_epsilon_history
     if fsr_delta_d1_history is not None:
         result["fsr_delta_d1_history"] = np.asarray(fsr_delta_d1_history)
+    # Opt-in provenance stamp. OFF by default so the returned dict is unchanged
+    # key-for-key: tests/test_regression_figures.py hashes EVERY key of this
+    # dict against a golden, and the stamp is a non-array carrying a wall-clock
+    # timestamp. No RNG calls and no arithmetic either way.
+    if provenance:
+        result["provenance"] = {
+            "script": "simulator/lle_solver.py:solve_lle_ssfm_jax",
+            "caller": _provenance_caller(),
+            "git_commit": _PROVENANCE_GIT_COMMIT,
+            "physical_parameters_sha256": config_block_sha256(physical),
+            "noise_config_sha256": noise_config_sha256(resolved_noise),
+            "seed": _provenance_seed(rng_key, resolved_noise),
+            "env_fingerprint": env_fingerprint(),
+            "arxiv_ref": dict(ARXIV_REF),
+            "generated_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
     return result
 
 
