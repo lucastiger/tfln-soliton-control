@@ -19,6 +19,7 @@ import warnings
 from pathlib import Path
 
 import pytest
+import yaml
 
 from simulator.noise_config import (
     NOISE_CHANNELS,
@@ -212,10 +213,22 @@ def test_all_field_digests_are_mutually_distinct():
 # ---------------------------------------------------------------------------
 # 5. Legacy YAML fallback
 # ---------------------------------------------------------------------------
-def test_from_yaml_committed_config_is_legacy_trn_only():
-    """The committed config has no 'noise:' block: T_k=300 => trn only, and it warns."""
+def test_from_yaml_committed_config_is_legacy_trn_only(tmp_path):
+    """Legacy fallback: with no 'noise:' block, T_k=300 => trn only, and it warns.
+
+    The committed config now carries a top-level ``noise:`` block, so it no
+    longer reaches this branch; the block-present behaviour is covered by
+    ``test_from_yaml_noise_block_takes_precedence`` and by
+    tests/test_noise_config_integration.py. Strip the block here so the LEGACY
+    path this test was written for still gets exercised.
+    """
+    raw = yaml.safe_load(open(CONFIG_PATH, encoding="utf-8"))
+    raw.pop("noise", None)
+    legacy_path = tmp_path / "legacy_no_noise_block.yaml"
+    legacy_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
     with pytest.warns(DeprecationWarning) as record:
-        cfg = NoiseConfig.from_yaml(CONFIG_PATH)
+        cfg = NoiseConfig.from_yaml(legacy_path)
 
     assert cfg.trn is True
     for name in SWITCH_FIELDS:
