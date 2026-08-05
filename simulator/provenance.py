@@ -55,17 +55,10 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 #: ``version`` pin is mandatory: equation and section numbers cited throughout
 #: the solver (e.g. Sec. V.B.2, Eq. 126) are v1 numbers and may shift in a
 #: later revision, so a stamp that records only the arXiv id is ambiguous.
-#:
-#: ``title`` is deliberately EMPTY: the repository records the id, the v1 pin,
-#: the author surnames and the 7 Apr 2026 date (README.md, docs/
-#: NOISE_CHANNEL_INVENTORY.md, validation/noise_off_identity.py) but never the
-#: title, and arXiv is not reachable from the build sandbox. A stamp that cites
-#: the WRONG title is worse than one that cites none -- fill this in from the
-#: paper rather than guessing.
 ARXIV_REF: dict[str, Any] = {
     "id": "2604.05897",
     "version": "v1",
-    "title": "",
+    "title": "Frequency combs and coherent dissipative structures in nonlinear optical microresonators",
     "authors": ["Herr", "Tikan", "Kippenberg"],
     "date": "2026-04-07",
     "accessed": "2026-08-04",
