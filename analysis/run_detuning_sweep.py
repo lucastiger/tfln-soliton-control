@@ -260,6 +260,7 @@ import json
 import sys
 import tempfile
 import time
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -303,6 +304,7 @@ from analysis.spectral_metrics import (  # noqa: E402
     single_dks_region,
     soliton_count_transitions,
 )
+from simulator.noise_config import NoiseConfig  # noqa: E402
 from simulator.state_labeler import make_threshold_params  # noqa: E402
 
 SWEEP_NPZ = "detuning_sweep.npz"
@@ -398,8 +400,23 @@ def write_noise_off_config(base_config_path=CONFIG_PATH, out_path=None) -> Path:
     T_k, so they too need their own switch to give a fully deterministic
     sidecar run.
     """
+    warnings.warn(
+        "write_noise_off_config() is deprecated: it encodes 'noise off' as "
+        "T_k = 0 (literally 0 kelvin ambient) plus two legacy flags. Prefer "
+        "simulator.noise_config.NoiseConfig.all_off(), passed to "
+        "solve_lle_ssfm_jax(noise_config=...) or written as the sidecar's "
+        "top-level 'noise:' block. This shim now writes BOTH representations.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     with open(base_config_path, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f) or {}
+    # Authoritative representation: the top-level noise: block. It outranks every
+    # legacy key below, so this is what actually silences the channels.
+    cfg["noise"] = NoiseConfig.all_off().to_dict()
+    # Backward compatibility: keep setting the legacy keys verbatim so consumers
+    # that still read physical_parameters directly (e.g. the dataset generator)
+    # keep behaving exactly as before.
     pp = cfg.setdefault("physical_parameters", {})
     pp["T_k"] = 0.0
     pp["quantum_noise_enabled"] = 0

@@ -7,7 +7,9 @@ https://github.com/lucastiger/soliton-control/edit/main/simulator/lle_solver.pys
 
 from __future__ import annotations
 
+import dataclasses
 import functools
+import logging
 import math
 import warnings
 from pathlib import Path
@@ -30,6 +32,11 @@ import jax.numpy as jnp
 import numpy as np
 import yaml
 
+from simulator.noise_config import (
+    LEGACY_PARAMETER_KEYS,
+    LEGACY_SWITCH_KEYS,
+    NoiseConfig,
+)
 from simulator.state_labeler import (
     make_state_labeler,
     make_threshold_params,
@@ -37,6 +44,125 @@ from simulator.state_labeler import (
 )
 
 _DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "sin_params.yaml"
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def _noise_block_from_yaml(config_path: str | Path | None = None) -> dict[str, Any]:
+    """The top-level ``noise:`` block of a config file ({} when absent)."""
+    cfg_path = Path(config_path) if config_path is not None else _DEFAULT_CONFIG_PATH
+    with cfg_path.open("r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
+    block = raw.get("noise") if isinstance(raw, dict) else None
+    if block is None:
+        return {}
+    if not isinstance(block, dict):
+        raise ValueError(
+            f"{cfg_path}: top-level 'noise' must be a mapping, "
+            f"got {type(block).__name__}."
+        )
+    known = {f.name for f in dataclasses.fields(NoiseConfig)}
+    unknown = sorted(set(block) - known)
+    if unknown:
+        raise ValueError(
+            f"{cfg_path}: unknown key(s) in the 'noise' block: {unknown}. "
+            f"Valid fields: {sorted(known)}."
+        )
+    return dict(block)
+
+
+def _legacy_noise_values(physical: dict[str, Any]) -> dict[str, Any]:
+    """NoiseConfig field values implied by the DEPRECATED physical_parameters keys.
+
+    Only keys actually present in the mapping contribute, so this layer never
+    invents a value — that is what makes the precedence chain in
+    :func:`_resolve_noise_flags` well-defined.
+
+    The implicit gates are reproduced exactly as ``simulator.noise_models``
+    resolves them: ``T_k > 0`` for the two temperature-driven channels, and a
+    non-zero ``eo_r33_m_per_v`` for TCCR (which carries no T_k factor at all —
+    the reason the historical "T_k = 0 means noise off" convention never
+    silenced TCCR on chi2 platforms).
+    """
+    values: dict[str, Any] = {}
+    for legacy_key, targets in LEGACY_SWITCH_KEYS.items():
+        if legacy_key in physical:
+            on = bool(int(physical[legacy_key]))
+            for target in targets:
+                values[target] = on
+    if "T_k" in physical:
+        warm = float(physical["T_k"]) > 0.0
+        values["trn"] = warm
+        values["pyro_eo"] = warm
+    if "eo_r33_m_per_v" in physical:
+        values["tccr"] = float(physical["eo_r33_m_per_v"]) != 0.0
+    for legacy_key, target in LEGACY_PARAMETER_KEYS.items():
+        if legacy_key in physical:
+            value = physical[legacy_key]
+            if target in ("legacy_segment_noise", "quantum_seed_vacuum_init"):
+                value = bool(int(value))
+            elif target == "quantum_injection_cadence":
+                value = int(value)
+            values[target] = value
+    return values
+
+
+#: solve_lle_ssfm_jax keyword -> the NoiseConfig field(s) it overrides. Note the
+#: single legacy ``pump_noise_enabled`` kwarg drives BOTH pump channels.
+_KWARG_TO_FIELDS: dict[str, tuple[str, ...]] = {
+    "quantum_noise_enabled": ("quantum_vacuum",),
+    "quantum_noise_seed_vacuum_init": ("quantum_seed_vacuum_init",),
+    "quantum_noise_injection_cadence": ("quantum_injection_cadence",),
+    "pump_noise_enabled": ("pump_freq_noise", "pump_rin"),
+    "fsr_noise_enabled": ("fsr",),
+}
+
+_INT_FIELDS = frozenset({"quantum_injection_cadence"})
+
+
+def _resolve_noise_flags(
+    physical: dict[str, Any],
+    config_path: str | Path | None = None,
+    noise_config: "NoiseConfig | None" = None,
+    **kwargs: Any,
+) -> "NoiseConfig":
+    """Resolve every noise channel to ONE NoiseConfig — the single source of truth.
+
+    Precedence, highest first:
+
+      1. an explicit ``solve_lle_ssfm_jax`` keyword argument (``**kwargs`` here,
+         ``None`` meaning "not supplied");
+      2. a ``noise_config`` object — being a dataclass it carries a value for
+         EVERY field, so passing one overrides the whole YAML block by design;
+      3. the top-level ``noise:`` block of the config file;
+      4. the deprecated ``physical_parameters`` switches;
+      5. the ``NoiseConfig`` field defaults.
+
+    All precedence logic lives here and nowhere else. The resolved config is
+    logged once per call at DEBUG level.
+    """
+    values: dict[str, Any] = {}
+    values.update(_legacy_noise_values(physical))                  # 4
+    values.update(_noise_block_from_yaml(config_path))             # 3
+    if noise_config is not None:                                   # 2
+        values.update(noise_config.to_dict())
+    for kwarg, fields in _KWARG_TO_FIELDS.items():                 # 1
+        supplied = kwargs.get(kwarg)
+        if supplied is None:
+            continue
+        for field in fields:
+            values[field] = (
+                int(supplied) if field in _INT_FIELDS else bool(int(supplied))
+            )
+
+    resolved = NoiseConfig(**values)                               # 5 via defaults
+    _LOGGER.debug(
+        "resolved noise config: sha256=%s enabled=%s | %s",
+        resolved.sha256(),
+        resolved.enabled_channels or ("none",),
+        resolved.to_dict(),
+    )
+    return resolved
 
 # Reduced Planck constant [J·s] (CODATA). Used only by the quantum-vacuum-noise
 # channel to convert intracavity energy |E|² [J] to photon number via ħω₀.
@@ -827,7 +953,8 @@ def _legacy_rng_chain(rng_key: jax.Array, n_traj: int):
 
 
 def _detuning_noise_sequences(
-    noise_keys: jax.Array, t_slow: int, config_path: str | Path | None = None
+    noise_keys: jax.Array, t_slow: int, config_path: str | Path | None = None,
+    noise_config: "NoiseConfig | None" = None,
 ) -> jnp.ndarray:
     """Per-trajectory TRN/PyroEO/TCCR detuning-noise sequences, (n_traj, t_slow).
 
@@ -844,7 +971,8 @@ def _detuning_noise_sequences(
     """
     from simulator.noise_models import TotalNoise, _load_config as _nm_load_cfg
 
-    _noise_model = TotalNoise(_nm_load_cfg(config_path))
+    # noise_config=None keeps the legacy per-channel rules => bit-identical.
+    _noise_model = TotalNoise(_nm_load_cfg(config_path), noise_config=noise_config)
     if _noise_model.is_colored:
         rows = [
             np.asarray(_noise_model.sample(k, int(t_slow)))
@@ -859,7 +987,8 @@ def _detuning_noise_sequences(
 
 
 def _delta_t_sequences(
-    noise_keys: jax.Array, t_slow: int, config_path: str | Path | None = None
+    noise_keys: jax.Array, t_slow: int, config_path: str | Path | None = None,
+    noise_config: "NoiseConfig | None" = None,
 ) -> jnp.ndarray:
     """Per-trajectory temperature sequences dT(t) [K], (n_traj, t_slow) f64.
 
@@ -875,7 +1004,8 @@ def _delta_t_sequences(
     """
     from simulator.noise_models import TotalNoise, _load_config as _nm_load_cfg
 
-    _noise_model = TotalNoise(_nm_load_cfg(config_path))
+    # noise_config=None keeps the legacy per-channel rules => bit-identical.
+    _noise_model = TotalNoise(_nm_load_cfg(config_path), noise_config=noise_config)
     if _noise_model.is_colored:
         rows = [
             np.asarray(_noise_model.sample_with_delta_t(k, int(t_slow))[1])
@@ -943,6 +1073,7 @@ def solve_lle_ssfm_jax(
     fsr_noise_enabled: bool | None = None,
     fsr_delta_d1_override: np.ndarray | jnp.ndarray | None = None,
     mode_probe_indices: tuple[int, ...] | list[int] | None = None,
+    noise_config: NoiseConfig | None = None,
 ) -> dict[str, np.ndarray]:
     """Batch-capable SSFM solver for the generalized LLE using JAX.
 
@@ -1337,30 +1468,41 @@ def solve_lle_ssfm_jax(
         )
         return bool(value)
 
-    if quantum_noise_enabled is None:
-        quantum_noise_enabled = physical.get("quantum_noise_enabled", 0)
-    qn_enabled = _as_flag("quantum_noise_enabled", quantum_noise_enabled)
-    if quantum_noise_seed_vacuum_init is None:
-        quantum_noise_seed_vacuum_init = physical.get(
-            "quantum_noise_seed_vacuum_init", 1
+    # Single resolution point for EVERY channel (see _resolve_noise_flags for the
+    # precedence chain: kwarg > noise_config > YAML noise: block > legacy
+    # physical_parameters key > NoiseConfig default).
+    for _name, _val in (
+        ("quantum_noise_enabled", quantum_noise_enabled),
+        ("quantum_noise_seed_vacuum_init", quantum_noise_seed_vacuum_init),
+        ("pump_noise_enabled", pump_noise_enabled),
+        ("fsr_noise_enabled", fsr_noise_enabled),
+    ):
+        if _val is not None:
+            _as_flag(_name, _val)
+    if quantum_noise_injection_cadence is not None:
+        assert isinstance(
+            quantum_noise_injection_cadence, (bool, int, np.integer)
+        ) and int(quantum_noise_injection_cadence) in (0, 1), (
+            f"quantum_noise_injection_cadence must be 0 (fine) or 1 (roundtrip), "
+            f"got {quantum_noise_injection_cadence!r}."
         )
-    qn_seed_vacuum = _as_flag(
-        "quantum_noise_seed_vacuum_init", quantum_noise_seed_vacuum_init
+    resolved_noise = _resolve_noise_flags(
+        physical,
+        config_path,
+        noise_config,
+        quantum_noise_enabled=quantum_noise_enabled,
+        quantum_noise_seed_vacuum_init=quantum_noise_seed_vacuum_init,
+        quantum_noise_injection_cadence=quantum_noise_injection_cadence,
+        pump_noise_enabled=pump_noise_enabled,
+        fsr_noise_enabled=fsr_noise_enabled,
     )
+
+    qn_enabled = resolved_noise.quantum_vacuum
+    qn_seed_vacuum = resolved_noise.quantum_seed_vacuum_init
 
     hbar_omega0 = hbar_omega0_from_config(physical)
     dt_fine = t_r / fine_cadence_M
-    if quantum_noise_injection_cadence is None:
-        quantum_noise_injection_cadence = physical.get(
-            "quantum_noise_injection_cadence", 0
-        )
-    assert isinstance(quantum_noise_injection_cadence, (bool, int, np.integer)) and int(
-        quantum_noise_injection_cadence
-    ) in (0, 1), (
-        f"quantum_noise_injection_cadence must be 0 (fine) or 1 (roundtrip), "
-        f"got {quantum_noise_injection_cadence!r}."
-    )
-    qn_roundtrip = bool(int(quantum_noise_injection_cadence))
+    qn_roundtrip = bool(resolved_noise.quantum_injection_cadence)
     if qn_enabled:
         # Per-quadrature time-domain injection std per injection EVENT (see
         # the "Quantum noise" docstring section for the Parseval derivation):
@@ -1435,7 +1577,7 @@ def solve_lle_ssfm_jax(
 
     # --- Generate per-trajectory noise sequences (see _detuning_noise_sequences) ---
     noise_sequences = _detuning_noise_sequences(
-        noise_keys, int(t_slow), config_path
+        noise_keys, int(t_slow), config_path, noise_config=resolved_noise
     )  # (n_traj, t_slow)
 
     n_traj = delta_arr.shape[0]
@@ -1459,10 +1601,16 @@ def solve_lle_ssfm_jax(
     _pk, key_pump = jax.random.split(_pk, 2)              # appended pump key
     key_pump_freq, key_pump_rin = jax.random.split(key_pump, 2)
 
-    if pump_noise_enabled is None:
-        pump_noise_enabled = physical.get("pump_noise_enabled", 0)
-    _pump = _PumpNoise(physical, enabled=pump_noise_enabled)
+    # PumpNoise carries ONE enabled flag for both channels; the resolved config
+    # tracks them separately, so the object is live if either is on and each
+    # channel is then gated individually below.
+    _pump = _PumpNoise(
+        physical,
+        enabled=bool(resolved_noise.pump_freq_noise or resolved_noise.pump_rin),
+    )
     pump_on = _pump.enabled
+    pump_freq_on = bool(resolved_noise.pump_freq_noise)
+    pump_rin_on = bool(resolved_noise.pump_rin)
 
     def _broadcast_pump_seq(arr, name):
         a = np.asarray(arr, dtype=np.float64)
@@ -1486,7 +1634,7 @@ def solve_lle_ssfm_jax(
         # Override is delta_nu_p in Hz; contribution to delta_omega is -2*pi*dnu.
         _dnu = _broadcast_pump_seq(pump_freq_noise_override, "pump_freq_noise_override")
         pump_freq_noise_history = (-2.0 * math.pi * _dnu).astype(np.float64)
-    elif pump_on and (_pump._h0 > 0.0 or _pump._hm1 > 0.0):
+    elif pump_freq_on and (_pump._h0 > 0.0 or _pump._hm1 > 0.0):
         _freq_keys = jax.random.split(key_pump_freq, n_traj)
         pump_freq_noise_history = np.stack(
             [-np.asarray(_pump.sample_freq(k, int(t_slow))) for k in _freq_keys]
@@ -1505,7 +1653,7 @@ def solve_lle_ssfm_jax(
         pump_rin_epsilon_history = _broadcast_pump_seq(
             pump_rin_epsilon_override, "pump_rin_epsilon_override"
         ).astype(np.float64)
-    elif pump_on:
+    elif pump_rin_on:
         _rin_keys = jax.random.split(key_pump_rin, n_traj)
         pump_rin_epsilon_history = np.stack(
             [np.asarray(_pump.sample_rin(k, int(t_slow))) for k in _rin_keys]
@@ -1516,7 +1664,7 @@ def solve_lle_ssfm_jax(
     # Only build pump_scale_sequence when RIN is actually non-trivial; otherwise
     # pass None so the scan traces the legacy constant-kick path (zero extra ops).
     if pump_rin_epsilon_override is not None or (
-        pump_on and _pump._rin_floor_lin > 0.0
+        pump_rin_on and _pump._rin_floor_lin > 0.0
     ):
         pump_scale_sequence = jnp.asarray(
             np.maximum(1.0 + pump_rin_epsilon_history, 0.0), dtype=jnp.float64
@@ -1529,9 +1677,7 @@ def solve_lle_ssfm_jax(
     # TRN/Pyro-EO channels (regenerated deterministically from noise_keys via
     # _delta_t_sequences). None when the channel is inert -> the scan traces
     # the legacy linear operator with zero extra ops.
-    if fsr_noise_enabled is None:
-        fsr_noise_enabled = physical.get("fsr_noise_enabled", 0)
-    fsr_on = _as_flag("fsr_noise_enabled", fsr_noise_enabled)
+    fsr_on = resolved_noise.fsr
     if fsr_delta_d1_override is not None:
         fsr_delta_d1_history = _broadcast_pump_seq(
             fsr_delta_d1_override, "fsr_delta_d1_override"
@@ -1543,7 +1689,9 @@ def solve_lle_ssfm_jax(
         _trn = _TRNoise(physical)
         _d1 = 2.0 * math.pi * thermal["fsr_hz"]              # rad/s
         _omega0_fsr = 2.0 * math.pi * 299_792_458.0 / thermal["pump_wavelength_m"]
-        _dt_seqs = _delta_t_sequences(noise_keys, int(t_slow), config_path)
+        _dt_seqs = _delta_t_sequences(
+            noise_keys, int(t_slow), config_path, noise_config=resolved_noise
+        )
         fsr_noise_sequences = (
             (_d1 / _omega0_fsr) * _trn.c_pull * _dt_seqs
         ).astype(jnp.float64)                                # (n_traj, t_slow)
