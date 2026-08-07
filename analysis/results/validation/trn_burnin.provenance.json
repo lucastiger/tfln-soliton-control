@@ -1,0 +1,31 @@
+{
+  "arrays": [
+    "legacy_ratio",
+    "legacy_ratio_analytic",
+    "per_realization_legacy",
+    "per_realization_stationary",
+    "stationary_ratio",
+    "t_slow"
+  ],
+  "meta": {
+    "figure": "/home/user/soliton-control/analysis/results/validation/trn_burnin.png",
+    "params": {
+      "alpha": 0.9999918699517482,
+      "burn_in_round_trips": 61500.00000000001,
+      "estimator": "raw second moment mean(x**2), pooled over realizations",
+      "estimator_rel_sigma": 0.1767766952966369,
+      "n_realizations": 64,
+      "seed": 20260807,
+      "sigma_physical": 1.0,
+      "t_r_s": 4.065040650406504e-11,
+      "tau_th_s": 5e-06
+    }
+  },
+  "provenance": {
+    "generated_utc": "2026-08-07T00:29:07Z",
+    "git_commit": "13a84cd1d401",
+    "physical_parameters_sha256": "d22dde09b04925b38f58a4078a1b58dc9457796a2ed88e2e67748b0d4feb28d8",
+    "script": "analysis/trn_burnin_study.py",
+    "seed": 20260807
+  }
+}

@@ -269,6 +269,10 @@ generator:
   stationary from sample 0. With the committed config (measured) `t_r = 4.065e-11 s`,
   `tau_th = 5.0e-6 s`, `alpha = 0.99999187`, the burn-in scale `tau_th/(2·t_r) ≈ 6.1e4`
   round trips.
+  *(Addressed in the commit immediately following this audit: `_ar1_samples` gained a
+  `stationary_init` argument, `TRNoise`/`TotalNoise` now thread the field, and
+  `analysis/trn_burnin_study.py` measures the bias. The flag still defaults to `False`,
+  so the description above remains the DEFAULT behaviour.)*
 * `noise_dtype` — declared `simulator/noise_config.py:203`, written
   `config/sin_params.yaml:55`. No generator reads it; the working precision is hard-coded
   float32 at `simulator/noise_models.py:184`, `:190`, `:578` (see G3).

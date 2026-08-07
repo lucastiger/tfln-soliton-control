@@ -177,17 +177,86 @@ def _load_config(config_path: str | Path | None = None) -> dict[str, Any]:
     return cfg.get("physical_parameters", {})
 
 
-def _ar1_samples(key, N, tau_corr, sigma_physical, t_r):
-    """Generate AR(1) samples with target stationary variance."""
+def _ar1_samples(key, N, tau_corr, sigma_physical, t_r,
+                 stationary_init: bool = False):
+    """Generate AR(1) samples with target stationary variance ``sigma_physical**2``.
+
+    The recursion is ``x_n = alpha*x_{n-1} + sigma_step*xi_n`` with
+    ``alpha = exp(-t_r/tau_corr)`` and
+    ``sigma_step = sigma_physical*sqrt(1 - alpha**2)``, so the STATIONARY
+    variance is exactly ``sigma_physical**2``. Which variance the returned
+    record actually realizes depends on how the scan carry is initialised:
+
+    ``stationary_init=False`` (default -- the historical behaviour)
+        The carry starts at exactly ``0.0``. The record is therefore NOT
+        stationary; its variance ramps as
+
+            Var(x_n) = sigma_physical**2 * (1 - alpha**(2n)),
+
+        i.e. it reaches a fraction ``1 - exp(-2*n*t_r/tau_corr)`` of the target
+        after ``n`` steps. The burn-in scale is ``n_burn = tau_corr/(2*t_r)``
+        round trips (the 1/e point of ``alpha**(2n)``). Pooled over a record of
+        length ``N`` the mean square is suppressed to
+
+            E[mean(x**2)] / sigma_physical**2
+                = 1 - alpha**2 * (1 - alpha**(2N)) / (N*(1 - alpha**2))
+                ~ N*t_r/tau_corr        for  N*t_r << tau_corr,
+
+        so a SHORT run has systematically suppressed amplitude, worst at the
+        start of the record. With the repository's TRN numbers
+        (``t_r = 40.65 ps``, ``tau_th = 5 us``) ``n_burn ~ 6.1e4`` round trips,
+        which is longer than most trajectories -- see
+        ``analysis/trn_burnin_study.py`` for the measured bias curve.
+
+        This path consumes the key EXACTLY as the pre-change implementation
+        did (one ``jax.random.normal`` draw of shape ``(N,)`` keyed directly on
+        ``key``, no split), so it is bit-identical to it.
+
+    ``stationary_init=True``
+        ``key`` is split ONCE into ``(key_x0, key_xi)``; the initial carry is
+        drawn as ``x0 ~ Normal(0, sigma_physical)`` from the FIRST subkey and
+        the ``N`` innovations from the SECOND. The record is then stationary
+        from sample 0: ``Var(x_n) = sigma_physical**2`` for every ``n``, and
+        ``Corr(x_n, x_{n+1}) = alpha`` including at ``n = 0``.
+
+        Drawing ``x0`` from a dedicated subkey (rather than, say, taking the
+        first element of an ``N+1``-long draw) is what keeps the innovation
+        stream independent of ``N``: ``key_xi`` is a fixed function of ``key``
+        alone, so lengthening a run extends its innovation sequence instead of
+        re-deriving it.
+
+    Args:
+        key: JAX PRNG key.
+        N: number of samples to return.
+        tau_corr: correlation time [s].
+        sigma_physical: target stationary standard deviation.
+        t_r: sampling interval (round-trip time) [s].
+        stationary_init: see above. ``False`` (default) preserves the legacy
+            zero-start behaviour bit-for-bit.
+
+    Returns:
+        ``(N,)`` float32 array (the scan carry dtype pins the whole recursion
+        to float32 -- see ``docs/NOISE_CHANNEL_INVENTORY.md`` G3).
+    """
     alpha = jnp.exp(-t_r / tau_corr)
     sigma_step = sigma_physical * jnp.sqrt(1 - alpha**2)
-    xi = jax.random.normal(key, shape=(N,), dtype=jnp.float32)
+    if stationary_init:
+        key_x0, key_xi = jax.random.split(key, 2)
+        x0 = (
+            sigma_physical
+            * jax.random.normal(key_x0, shape=(), dtype=jnp.float32)
+        ).astype(jnp.float32)
+    else:
+        # Legacy: no split at all, so the key is consumed exactly as before.
+        key_xi = key
+        x0 = jnp.zeros((), dtype=jnp.float32)
+    xi = jax.random.normal(key_xi, shape=(N,), dtype=jnp.float32)
 
     def scan_fn(x_prev, xi_n):
         x_next = alpha * x_prev + sigma_step * xi_n
         return x_next, x_next
 
-    _, samples = jax.lax.scan(scan_fn, jnp.zeros((), dtype=jnp.float32), xi)
+    _, samples = jax.lax.scan(scan_fn, x0, xi)
     return samples
 
 
@@ -211,8 +280,15 @@ class TRNoise:
     traced AR(1) path.
     """
 
-    def __init__(self, cfg, enabled: bool | None = None):
+    def __init__(self, cfg, enabled: bool | None = None,
+                 ar1_stationary_init: bool = False):
         self.cfg = cfg
+        # Start the legacy AR(1) generator from its stationary distribution
+        # instead of from x0 = 0. False (default) is bit-identical to the
+        # historical behaviour; see _ar1_samples for the burn-in formula.
+        # Only meaningful for trn_psd_model = single_pole -- the colored models
+        # synthesize from the PSD and are stationary from sample 0 already.
+        self.ar1_stationary_init = bool(ar1_stationary_init)
         self.t_r = 1.0 / float(cfg.get("fsr_hz", 2.0e11))
         self.omega_0 = 2.0 * math.pi * 299_792_458.0 / float(cfg.get("pump_wavelength_m", 1.55e-6))
         self.n0 = float(cfg.get("n0", 2.2))
@@ -275,7 +351,8 @@ class TRNoise:
         if not self.enabled:
             return _zeros(N, self._sample_dtype)
         if not self.is_colored:
-            return _ar1_samples(key, N, self.tau_th, self.sigma_trn, self.t_r)
+            return _ar1_samples(key, N, self.tau_th, self.sigma_trn, self.t_r,
+                                self.ar1_stationary_init)
         return jnp.asarray(self.c_pull * self.sample_delta_t(key, N),
                            dtype=jnp.float64)
 
@@ -491,10 +568,19 @@ class TotalNoise:
                 ``None`` (the default) every sub-channel resolves its own switch from
                 the legacy rule, so behaviour is EXACTLY as before this parameter
                 existed. When supplied, each sub-channel's ``enabled`` comes from the
-                corresponding field (``trn``, ``pyro_eo``, ``tccr``).
+                corresponding field (``trn``, ``pyro_eo``, ``tccr``), and
+                ``trn_ar1_stationary_init`` selects the start-up policy of the
+                shared thermal AR(1) stream (see :func:`_ar1_samples`). That
+                field defaults to ``False``, so a supplied config that leaves it
+                alone is still bit-identical to the historical stream.
         """
         self.cfg = cfg
         self.noise_config = noise_config
+        # AR(1) start-up policy for the SHARED thermal stream (single_pole only).
+        # Default False => bit-identical to the historical zero-start behaviour.
+        self.trn_ar1_stationary_init = bool(
+            getattr(noise_config, "trn_ar1_stationary_init", False)
+        )
         if noise_config is None:
             trn_enabled = pyro_enabled = tccr_enabled = None
         else:
@@ -507,7 +593,8 @@ class TotalNoise:
                     "because both are driven by the same delta_T realization.",
                     stacklevel=2,
                 )
-        self.trn = TRNoise(cfg, enabled=trn_enabled)
+        self.trn = TRNoise(cfg, enabled=trn_enabled,
+                           ar1_stationary_init=self.trn_ar1_stationary_init)
         self.pyroeo = PyroEONoise(cfg, enabled=pyro_enabled)
         self.tccr = TCCRNoise(cfg, enabled=tccr_enabled)
         self.t_r = self.trn.t_r
@@ -557,8 +644,12 @@ class TotalNoise:
             # functional, so a skipped draw cannot perturb key_tccr above).
             temp_noise = _zeros(N, jnp.float64 if self.is_colored else jnp.float32)
         elif not self.is_colored:
+            # trn_ar1_stationary_init=False (default) reproduces the historical
+            # zero-start stream bit-for-bit, including its ~tau_th/(2*t_r)
+            # round-trip burn-in; True starts from the stationary distribution.
             temp_noise = _ar1_samples(
-                key_thermal, N, self.tau_th, math.sqrt(self.var_delta_t), self.t_r
+                key_thermal, N, self.tau_th, math.sqrt(self.var_delta_t),
+                self.t_r, self.trn_ar1_stationary_init,
             )
         else:
             rng = np_generator_from_key(key_thermal)
