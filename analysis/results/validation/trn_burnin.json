@@ -1,0 +1,80 @@
+{
+  "artifacts": {
+    "npz": "/home/user/soliton-control/analysis/results/validation/trn_burnin.npz",
+    "png": "/home/user/soliton-control/analysis/results/validation/trn_burnin.png"
+  },
+  "params": {
+    "alpha": 0.9999918699517482,
+    "burn_in_round_trips": 61500.00000000001,
+    "estimator": "raw second moment mean(x**2), pooled over realizations",
+    "estimator_rel_sigma": 0.1767766952966369,
+    "n_realizations": 64,
+    "seed": 20260807,
+    "sigma_physical": 1.0,
+    "t_r_s": 4.065040650406504e-11,
+    "tau_th_s": 5e-06
+  },
+  "provenance": {
+    "generated_utc": "2026-08-07T00:29:07Z",
+    "git_commit": "13a84cd1d401",
+    "physical_parameters_sha256": "d22dde09b04925b38f58a4078a1b58dc9457796a2ed88e2e67748b0d4feb28d8",
+    "script": "analysis/trn_burnin_study.py",
+    "seed": 20260807
+  },
+  "rows": [
+    {
+      "legacy_ratio": 0.007857295989899364,
+      "legacy_ratio_analytic": 0.00809425868470759,
+      "legacy_suppression_factor": 128.32010118851755,
+      "n_over_tau": 0.008130081300813007,
+      "stationary_ratio": 1.0082490164920197,
+      "stationary_ratio_analytic": 1.0,
+      "t_slow": 1000
+    },
+    {
+      "legacy_ratio": 0.024360033247463934,
+      "legacy_ratio_analytic": 0.02400637917273063,
+      "legacy_suppression_factor": 41.48040793130858,
+      "n_over_tau": 0.024390243902439022,
+      "stationary_ratio": 1.0104641163250436,
+      "stationary_ratio_analytic": 1.0,
+      "t_slow": 3000
+    },
+    {
+      "legacy_ratio": 0.10408989117935098,
+      "legacy_ratio_analytic": 0.0770752253184861,
+      "legacy_suppression_factor": 9.90589851608414,
+      "n_over_tau": 0.08130081300813008,
+      "stationary_ratio": 1.0311038985728924,
+      "stationary_ratio_analytic": 1.0,
+      "t_slow": 10000
+    },
+    {
+      "legacy_ratio": 0.21283511102435468,
+      "legacy_ratio_analytic": 0.20865038861651686,
+      "legacy_suppression_factor": 4.713391429741573,
+      "n_over_tau": 0.2439024390243902,
+      "stationary_ratio": 1.0031751882502895,
+      "stationary_ratio_analytic": 1.0,
+      "t_slow": 30000
+    },
+    {
+      "legacy_ratio": 0.4470718991536349,
+      "legacy_ratio_analytic": 0.5059816894005591,
+      "legacy_suppression_factor": 2.132027891434395,
+      "n_over_tau": 0.8130081300813007,
+      "stationary_ratio": 0.9531697584720947,
+      "stationary_ratio_analytic": 1.0,
+      "t_slow": 100000
+    },
+    {
+      "legacy_ratio": 0.7520508318365986,
+      "legacy_ratio_analytic": 0.796562083624883,
+      "legacy_suppression_factor": 1.2412903209732007,
+      "n_over_tau": 2.439024390243902,
+      "stationary_ratio": 0.933513418438614,
+      "stationary_ratio_analytic": 1.0,
+      "t_slow": 300000
+    }
+  ]
+}

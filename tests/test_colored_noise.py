@@ -46,6 +46,7 @@ from simulator.noise_models import (
     TCCRNoise,
     TotalNoise,
     TRNoise,
+    _ar1_samples,
     _load_config as nm_load_cfg,
 )
 
@@ -316,6 +317,225 @@ def test_single_pole_bit_identical_to_legacy_ar1():
         for k in keys
     ])
     assert np.array_equal(got, want)
+
+
+# ---------------------------------------------------------------------------
+# (4b) AR(1) start-up (burn-in) policy: trn_ar1_stationary_init
+#
+# The legacy generator starts its lax.scan carry at exactly 0.0, so the record
+# is not stationary: Var(x_n) = sigma^2 * (1 - alpha^(2n)), with a burn-in of
+# n_burn = tau_corr/(2*t_r) round trips. See analysis/trn_burnin_study.py.
+# ---------------------------------------------------------------------------
+
+
+def _pooled_mean_square(tau_corr, t_r, n, n_real, seed, stationary_init):
+    """Pooled E[x^2]/sigma^2 estimate over ``n_real`` vmapped realizations.
+
+    RAW second moment, not ``np.var``: for tau_corr >> n*t_r a whole record is
+    one slow excursion, so subtracting the sample mean would remove exactly the
+    low-frequency power the burn-in suppresses. The process is zero-mean by
+    construction, so this is the right variance estimator. sigma_physical = 1,
+    hence the returned number IS the ratio to target.
+    """
+    keys = jax.random.split(jax.random.PRNGKey(seed), int(n_real))
+    x = np.asarray(
+        jax.vmap(
+            lambda k: _ar1_samples(k, int(n), tau_corr, 1.0, t_r,
+                                   stationary_init)
+        )(keys),
+        dtype=np.float64,
+    )
+    return float(np.mean(x**2))
+
+
+def test_ar1_legacy_init_bit_identical():
+    """stationary_init=False reproduces the PRE-CHANGE _ar1_samples bit-for-bit.
+
+    Compared against ``_legacy_ar1`` above — the inline reimplementation of the
+    generator as it stood before the flag existed — for several
+    (N, tau, sigma) points, and at the two public surfaces that consume it
+    (``TRNoise.sample`` and ``TotalNoise.sample_with_delta_t``). The default
+    argument value is exercised as well as the explicit ``False``, so a future
+    change of the default cannot slip through.
+    """
+    cfg = nm_load_cfg(None)
+    tn = TotalNoise(cfg)
+    key = jax.random.PRNGKey(20260807)
+
+    cases = [
+        (1, tn.tau_th, 1.0),
+        (2, tn.tau_th, 1.0),
+        (4096, tn.tau_th, math.sqrt(tn.var_delta_t)),
+        (4096, 100.0 * tn.t_r, 3.7),          # short tau: burn-in fully resolved
+        (10_000, 1.0e-7, 1.0),                # the TCCR correlation time
+    ]
+    for n, tau, sigma in cases:
+        want = np.asarray(_legacy_ar1(key, n, tau, sigma, tn.t_r))
+        got_default = np.asarray(_ar1_samples(key, n, tau, sigma, tn.t_r))
+        got_explicit = np.asarray(
+            _ar1_samples(key, n, tau, sigma, tn.t_r, False)
+        )
+        assert np.array_equal(got_default, want), (n, tau, sigma)
+        assert np.array_equal(got_explicit, want), (n, tau, sigma)
+        assert got_default.dtype == want.dtype == np.float32
+
+        # ...and the stationary path must genuinely differ (so the equality
+        # above is not vacuously true for both branches).
+        got_stat = np.asarray(_ar1_samples(key, n, tau, sigma, tn.t_r, True))
+        assert got_stat.shape == want.shape and got_stat.dtype == want.dtype
+        if sigma > 0.0:
+            assert not np.array_equal(got_stat, want), (n, tau, sigma)
+
+    # Public surfaces: default construction must be untouched.
+    n = 4096
+    assert np.array_equal(
+        np.asarray(TRNoise(cfg).sample(key, n)),
+        np.asarray(_legacy_ar1(key, n, tn.tau_th,
+                               (tn.omega_0 / tn.n0) * tn.dn_dT
+                               * math.sqrt(tn.var_delta_t), tn.t_r)),
+    )
+    assert TRNoise(cfg).ar1_stationary_init is False
+    assert TotalNoise(cfg).trn_ar1_stationary_init is False
+
+    legacy_dt = np.asarray(
+        _legacy_ar1(jax.random.split(key, 2)[0], n, tn.tau_th,
+                    math.sqrt(tn.var_delta_t), tn.t_r)
+    )
+    for noise_config in (
+        None,
+        NoiseConfig(trn=True, pyro_eo=True),                       # field default
+        NoiseConfig(trn=True, pyro_eo=True, trn_ar1_stationary_init=False),
+    ):
+        tn_i = TotalNoise(cfg, noise_config=noise_config)
+        _combined, dt = tn_i.sample_with_delta_t(key, n)
+        assert np.array_equal(np.asarray(dt, dtype=np.float32), legacy_dt), (
+            f"noise_config={noise_config!r} perturbed the legacy dT stream"
+        )
+
+    # And the flag ON does change the solver-facing stream.
+    tn_on = TotalNoise(cfg, noise_config=NoiseConfig(
+        trn=True, pyro_eo=True, trn_ar1_stationary_init=True))
+    assert tn_on.trn_ar1_stationary_init is True
+    assert tn_on.trn.ar1_stationary_init is True
+    _c_on, dt_on = tn_on.sample_with_delta_t(key, n)
+    assert not np.array_equal(np.asarray(dt_on, dtype=np.float32), legacy_dt)
+
+
+def test_ar1_stationary_variance_within_2pct_at_short_N():
+    """N = 1000, 512 realizations: the stationary path realizes its target.
+
+    Two regimes, both at N = 1000 with 512 realizations:
+
+    (a) tau_corr = 8*t_r (record spans ~125 correlation times). Here the
+        estimator is precise — the effective dof is
+        R*N/L with L = (1+a^2)/(1-a^2) ~ 8, i.e. ~6.4e4, so its relative
+        1-sigma spread is sqrt(2/6.4e4) ~ 0.6% and a 2% band is a ~3.5-sigma
+        statement. This pins the AMPLITUDE CALIBRATION of the stationary draw:
+        x0 ~ Normal(0, sigma_physical) and the innovations together must land
+        on sigma_physical^2 exactly.
+
+    (b) the production tau_th (~1.23e5 round trips, so N = 1000 sits deep
+        inside the burn-in). Here a whole record is essentially ONE correlated
+        excursion, so the estimator has only ~R degrees of freedom and a
+        relative 1-sigma spread of sqrt(2/512) ~ 6.3%; a 2% band would be a
+        0.3-sigma statement, i.e. meaningless. The assertion is therefore
+        20% (~3.2 sigma) for the stationary path, plus the headline burn-in
+        fact — the legacy path realizes < 5% of its target variance, against
+        an analytic prediction of ~0.8%.
+
+    Splitting the tolerance this way is deliberate: the tight 2% number is
+    claimed only where the statistics support it.
+    """
+    cfg = nm_load_cfg(None)
+    t_r = 1.0 / float(cfg["fsr_hz"])
+    tau_th = float(cfg["tau_th_s"])
+    n, n_real, seed = 1000, 512, 20260807
+
+    def analytic_legacy(tau):
+        alpha = math.exp(-t_r / tau)
+        a2 = alpha * alpha
+        return 1.0 - a2 * (-math.expm1(2 * n * math.log(alpha))) / (
+            n * (1.0 - a2)
+        )
+
+    # --- (a) resolved-correlation regime: the 2% claim ---------------------
+    tau_short = 8.0 * t_r
+    stat_short = _pooled_mean_square(tau_short, t_r, n, n_real, seed, True)
+    assert abs(stat_short - 1.0) < 0.02, (
+        f"stationary_init=True realized {stat_short:.4f} of the target "
+        f"variance at N={n}, tau={tau_short:.3e} s (expected 1.000 +- 0.02)"
+    )
+    # sanity: at 125 correlation times the legacy path is nearly stationary
+    # too, so (a) alone could not have detected the burn-in — hence (b).
+    leg_short = _pooled_mean_square(tau_short, t_r, n, n_real, seed, False)
+    assert abs(leg_short - analytic_legacy(tau_short)) < 0.03, leg_short
+
+    # --- (b) production regime: the burn-in is severe -----------------------
+    stat_prod = _pooled_mean_square(tau_th, t_r, n, n_real, seed, True)
+    leg_prod = _pooled_mean_square(tau_th, t_r, n, n_real, seed, False)
+    predicted = analytic_legacy(tau_th)
+
+    assert abs(stat_prod - 1.0) < 0.20, (
+        f"stationary_init=True realized {stat_prod:.4f} of the target variance "
+        f"at N={n}, tau_th={tau_th:.3e} s (expected 1.00 +- 0.20 at "
+        f"{n_real} realizations)"
+    )
+    assert leg_prod < 0.05, (
+        f"legacy AR(1) realized {leg_prod:.5f} of its target variance; the "
+        f"burn-in bias is supposed to be severe here (analytic {predicted:.5f})"
+    )
+    assert abs(leg_prod - predicted) < 0.5 * predicted, (leg_prod, predicted)
+    assert stat_prod / leg_prod > 20.0, (stat_prod, leg_prod)
+
+    print("\n" + "=" * 72)
+    print(f"AR(1) burn-in at N = {n}, {n_real} realizations "
+          f"(realized/target variance)")
+    print(f"{'regime':<34}{'legacy':>12}{'analytic':>12}{'stationary':>12}")
+    print(f"{'tau = 8*t_r (resolved)':<34}{leg_short:>12.5f}"
+          f"{analytic_legacy(tau_short):>12.5f}{stat_short:>12.5f}")
+    print(f"{'tau = tau_th (production)':<34}{leg_prod:>12.5f}"
+          f"{predicted:>12.5f}{stat_prod:>12.5f}")
+    print("=" * 72)
+
+
+@pytest.mark.parametrize("stationary_init", [False, True])
+@pytest.mark.parametrize("tau_over_tr", [200.0, None])
+def test_ar1_lag1_autocorrelation_matches_alpha(stationary_init, tau_over_tr):
+    """Long N: the lag-1 sample autocorrelation equals alpha = exp(-t_r/tau).
+
+    Both flag states, because changing the start-up policy must not touch the
+    RECURSION — only its initial condition. ``tau_over_tr=None`` uses the
+    production ``tau_th`` (alpha = 1 - 8.1e-6), which additionally checks that
+    the float32 recursion still resolves a correlation time four orders of
+    magnitude longer than the sampling interval.
+
+    Tolerance is derived from the statistics rather than hand-tuned: 5x the
+    large-sample standard error of a lag-1 correlation estimate,
+    sqrt((1 - alpha^2)/N), PLUS the estimator's known finite-sample downward
+    bias ~ (1 + 3*alpha)/N (which dominates the error budget once alpha
+    approaches 1, as it does at the production tau_th). N is large enough that
+    both terms are small; at N = 2e5 the bias term alone already exceeds the
+    standard error for the production tau.
+    """
+    cfg = nm_load_cfg(None)
+    t_r = 1.0 / float(cfg["fsr_hz"])
+    tau = (tau_over_tr * t_r) if tau_over_tr is not None \
+        else float(cfg["tau_th_s"])
+    n = 1_000_000
+    alpha = math.exp(-t_r / tau)
+
+    x = np.asarray(
+        _ar1_samples(jax.random.PRNGKey(4242), n, tau, 1.0, t_r,
+                     stationary_init),
+        dtype=np.float64,
+    )
+    r1 = float(np.corrcoef(x[:-1], x[1:])[0, 1])
+    tol = 5.0 * math.sqrt((1.0 - alpha**2) / n) + (1.0 + 3.0 * alpha) / n
+    assert abs(r1 - alpha) < tol, (
+        f"lag-1 autocorrelation {r1:.9f} != alpha {alpha:.9f} "
+        f"(|diff| {abs(r1 - alpha):.3e} > tol {tol:.3e}); "
+        f"stationary_init={stationary_init}, tau={tau:.3e} s"
+    )
 
 
 def test_sample_with_delta_t_consistency():
