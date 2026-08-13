@@ -603,6 +603,54 @@ def _qnoise_increment(
     return (scale * draw).astype(jnp.complex128)
 
 
+def _thermal_step(delta_t_cur, p_abs, dt, thermal, exponential: bool):
+    """Advance the single-pole thermo-optic ODE by one step of length ``dt``.
+
+    The ODE is
+        dΔT/dt = -ΔT/τ_th + Γ_th·P_abs/(ρ·Cp·V)      (Γ_th dimensionless; see
+    config/sin_params.yaml for the SiN numbers and the pre-flight guard).
+
+    ``exponential`` is a STATIC Python bool: the two branches are resolved at
+    trace time, so each path traces only its own arithmetic.
+
+    ``exponential=False`` (default everywhere) -- explicit Euler, the historical
+    update, kept expression-for-expression identical so the traced graph and
+    therefore every committed golden trajectory are unchanged. Order 1, and
+    conditionally stable: the amplification factor is ``1 - dt/τ_th``, so the
+    scheme DIVERGES once ``dt/τ_th > 2``.
+
+    ``exponential=True`` -- exact for piecewise-constant ``P_abs``. Derivation:
+      1. Write ΔT_ss = τ_th·Γ_th·P_abs/(ρ·Cp·V) (= R_th·P_abs, the steady state),
+         so the ODE is dΔT/dt = -(ΔT - ΔT_ss)/τ_th.
+      2. With P_abs constant over the step, ΔT - ΔT_ss is a pure decaying
+         exponential: (ΔT - ΔT_ss)(t+dt) = a·(ΔT - ΔT_ss)(t), a = exp(-dt/τ_th).
+      3. Hence ΔT_next = a·ΔT + (1-a)·ΔT_ss -- no truncation error in ΔT at all,
+         and unconditionally stable since a ∈ (0, 1) for every dt > 0.
+    P_abs IS piecewise constant over a fine step here (it is evaluated once, on
+    the end-of-fine-step field), so within the operator splitting this update is
+    exact and the Strang-split field steps set the global order instead of
+    capping it at 1.
+
+    ``(1 - a)`` is evaluated as ``-expm1(-dt/τ_th)``, never as ``1 - exp(...)``.
+    For dt/τ_th << 1 the direct form is catastrophic cancellation: at the
+    production ratio dt_fine/τ_th = t_r/τ_th ~ 8.1e-6, ``a`` rounds to
+    1 - 8.1e-6 with an absolute float64 error of ~1e-16, so the subtraction
+    returns a value carrying only ~11 significant digits instead of 16 --
+    a 1e-11 relative error injected into the drive term on every fine step, and
+    the thermo-optic loop feeds it back rather than averaging it away.
+    ``expm1`` computes the same quantity to full relative precision.
+    """
+    # Written to match the historical expression tree TOKEN FOR TOKEN so the
+    # Euler branch is bit-identical after the extraction into this helper.
+    drive = thermal["Gamma_th"] * p_abs / (thermal["rho"] * thermal["Cp"] * thermal["V"])
+    if not exponential:
+        return delta_t_cur + dt * (-delta_t_cur / thermal["tau_th"] + drive)
+    ratio = dt / thermal["tau_th"]
+    decay = jnp.exp(-ratio)                       # a
+    one_minus_decay = -jnp.expm1(-ratio)          # 1 - a, cancellation-free
+    return decay * delta_t_cur + one_minus_decay * (thermal["tau_th"] * drive)
+
+
 def _single_trajectory_solver(
     delta_omega: float,
     pin: float,
@@ -636,6 +684,8 @@ def _single_trajectory_solver(
     pump_scale_sequence: jnp.ndarray | None,  # (t_slow,) per-round-trip pump-power scale 1+eps (RIN); None = fixed pump (legacy trace)
     fsr_noise_sequence: jnp.ndarray | None,   # (t_slow,) per-round-trip FSR fluctuation dD1(t) [rad/s]; None = disabled (legacy trace)
     mode_probe_indices: tuple[int, ...],      # static; FFT-BIN indices of probed modes, () = no probes (legacy trace)
+    *,
+    thermal_exponential: bool = False,        # static; True = exact exponential thermal update (see _thermal_step)
 ) -> dict[str, jnp.ndarray]:
     """Solve one detuning trajectory with SSFM + thermal Euler update.
 
@@ -834,14 +884,12 @@ def _single_trajectory_solver(
         u_int = jnp.sum(jnp.abs(e_next) ** 2) * (t_r / n_tau)   # J
         p_abs = kappa_i * u_int / t_r
 
-        # Single-pole thermal ODE, Euler-stepped by dt_fine:
-        #   dΔT/dt = -ΔT/τ_th + Γ_th·P_abs/(ρ·Cp·V)   (Γ_th dimensionless; see
-        #   config/sin_params.yaml for the SiN numbers and the pre-flight guard).
-        d_delta_t = (
-            -delta_t_cur / thermal["tau_th"]
-            + thermal["Gamma_th"] * p_abs / (thermal["rho"] * thermal["Cp"] * thermal["V"])
+        # Single-pole thermal ODE advanced by dt_fine. thermal_exponential is a
+        # STATIC Python bool, so the default (Euler) path traces exactly the
+        # historical arithmetic and zero extra ops. See _thermal_step.
+        delta_t_next = _thermal_step(
+            delta_t_cur, p_abs, dt_fine, thermal, thermal_exponential
         )
-        delta_t_next = delta_t_cur + dt_fine * d_delta_t
         return e_next, delta_t_next, u_int, delta_omega_eff
 
     def _step(carry, step_idx):
@@ -1133,12 +1181,33 @@ def _delta_t_sequences(
 # path traces the legacy computation with zero extra ops.
 # mode_probe_indices(31) is a static tuple of FFT-bin indices; () disables the
 # per-round-trip probe FFT entirely (static branch, zero extra traced ops).
+_PER_TRAJ_IN_AXES = (0, None, None, None, None, None, None, None, None, None, None, 0, None, None, 0, 0, 0, None, None, None, None, None, None, None, None, 0, None, None, None, 0, 0, None)
+_PER_TRAJ_STATIC_ARGNUMS = (2, 3, 7, 10, 13, 18, 19, 20, 22, 24, 27, 28, 31)
+
 _PER_TRAJ = jax.jit(
     jax.vmap(
         _single_trajectory_solver,
-        in_axes=(0, None, None, None, None, None, None, None, None, None, None, 0, None, None, 0, 0, 0, None, None, None, None, None, None, None, None, 0, None, None, None, 0, 0, None),
+        in_axes=_PER_TRAJ_IN_AXES,
     ),
-    static_argnums=(2, 3, 7, 10, 13, 18, 19, 20, 22, 24, 27, 28, 31),
+    static_argnums=_PER_TRAJ_STATIC_ARGNUMS,
+)
+
+# Exponential (exact) thermal integrator: a SEPARATE jitted object rather than a
+# 33rd argument on _PER_TRAJ. _PER_TRAJ's 32-POSITIONAL SIGNATURE IS A PUBLIC
+# SURFACE -- data/dataset_generator.py and tests/test_quantum_noise.py both call
+# it with an explicit 32-argument list, and vmap's in_axes / jit's
+# static_argnums are both keyed to positional arity, so appending an argument
+# would break those callers even with a Python default. functools.partial binds
+# the flag BEFORE vmap sees the function, which keeps it a static Python bool
+# inside the trace (the disabled branch traces zero extra ops), leaves
+# _PER_TRAJ's signature and traced graph untouched, and gives each integrator
+# its own compilation cache.
+_PER_TRAJ_THERMAL_EXP = jax.jit(
+    jax.vmap(
+        functools.partial(_single_trajectory_solver, thermal_exponential=True),
+        in_axes=_PER_TRAJ_IN_AXES,
+    ),
+    static_argnums=_PER_TRAJ_STATIC_ARGNUMS,
 )
 
 
@@ -1380,6 +1449,20 @@ def solve_lle_ssfm_jax(
             is <= 128 MB. Cost: ONE dedicated jnp.fft.fft of the
             end-of-round-trip field per round trip, traced only when probes
             are requested (default None/() = no probes, zero extra ops).
+        noise_config: Optional :class:`~simulator.noise_config.NoiseConfig`.
+            Besides the channel switches it carries ``thermal_integrator``,
+            which selects how the thermo-optic ODE is advanced:
+            ``"euler"`` (the default, and what every committed golden
+            trajectory was produced with) is the historical explicit-Euler
+            update -- order 1, and divergent once ``dt_fine/tau_th > 2``;
+            ``"exponential"`` is the EXACT update for piecewise-constant
+            ``P_abs``, ``DeltaT_next = a*DeltaT + (1-a)*R_th*P_abs`` with
+            ``a = exp(-dt_fine/tau_th)`` (see :func:`_thermal_step`). Because
+            the ODE is linear in ``DeltaT`` the exponential form carries no
+            truncation error at all and is unconditionally stable, so it stops
+            the thermal update from capping the global order of the otherwise
+            second-order Strang-split field steps at 1. Selected as a static
+            Python flag, so ``"euler"`` traces the historical graph verbatim.
         provenance: If True, attach a ``"provenance"`` entry to the returned
             dict recording HOW this run was produced (see
             :mod:`simulator.provenance`): calling script, git commit, hashes of
@@ -1610,6 +1693,14 @@ def solve_lle_ssfm_jax(
         pump_noise_enabled=pump_noise_enabled,
         fsr_noise_enabled=fsr_noise_enabled,
     )
+
+    # Thermo-optic ODE integrator (NoiseConfig.thermal_integrator, validated
+    # against THERMAL_INTEGRATORS in NoiseConfig.__post_init__). "euler" is the
+    # default everywhere and selects the historical _PER_TRAJ object verbatim;
+    # "exponential" selects the exact update of _thermal_step. Resolved to a
+    # STATIC Python bool here, never traced.
+    thermal_exponential = resolved_noise.thermal_integrator == "exponential"
+    _per_traj = _PER_TRAJ_THERMAL_EXP if thermal_exponential else _PER_TRAJ
 
     qn_enabled = resolved_noise.quantum_vacuum
     qn_seed_vacuum = resolved_noise.quantum_seed_vacuum_init
@@ -1943,7 +2034,7 @@ def solve_lle_ssfm_jax(
                 f"got {tuple(d_int_grid_arr.shape)}."
             )
 
-    out = _PER_TRAJ(
+    out = _per_traj(
         delta_arr,
         float(pin),
         int(t_slow),
