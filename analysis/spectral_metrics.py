@@ -158,6 +158,101 @@ def comb_line_powers(spectrum, mode_index=None, *, pump_mu: int = 0):
     return mu, P
 
 
+def normal_ordered_spectrum(e_field, n_tau, hbar_omega0, *, clip=True):
+    """Convert a symmetric-ordered (truncated-Wigner) spectrum to the normally-ordered
+    spectrum an OSA or photodiode measures, by subtracting the half-photon-per-mode
+    vacuum bias:  ``S_normal = |FFT(E)|^2 - n_tau^2 * hbar_omega0 / 2``.
+
+    With ``clip=False`` the (possibly negative) signed residual is returned, which is what
+    you want when propagating error bars; with ``clip=True`` it is floored at 0.
+
+    REQUIRED FOR ANY COMPARISON TO MEASUREMENT
+    ------------------------------------------
+    The solver integrates the LLE in the truncated-Wigner c-number limit
+    (``simulator/lle_solver.py::_qnoise_increment``, arXiv:2604.05897v1 Sec. V.B.2,
+    Eq. 126). Wigner-representation moments are SYMMETRICALLY ordered, so a mode in the
+    vacuum state carries ``<a a* + a* a>/2 = 1/2`` of a photon and the simulated spectrum
+    sits on a flat, state-independent pedestal of exactly ``n_tau^2 * hbar_omega0 / 2``
+    per mode (the ``n_tau^2`` follows from the repo's FFT convention,
+    ``Etilde_mu = a_mu * n_tau * sqrt(hbar_omega0)``).
+
+    A photodetector or an optical spectrum analyser measures ``<a^dagger a>`` -- NORMALLY
+    ordered -- and therefore reads exactly zero for the vacuum. Comparing a raw simulated
+    ``|FFT(E)|^2`` against a measured spectrum silently adds that half-photon pedestal to
+    the simulation only. At the committed operating point the pedestal sits about
+    -82 dB relative to the pump, so it dominates every comb feature weaker than that and
+    makes the simulation look like it has a noise floor the instrument does not report.
+    Subtract it with this function before any such comparison.
+
+    THE SYMMETRIC-ORDERED FORM REMAINS CORRECT FOR INTERNAL ENERGY BOOKKEEPING
+    -------------------------------------------------------------------------
+    Do NOT use this function for energy accounting. ``U_int``, ``P_abs = kappa_i*<|E|^2>``,
+    the thermo-optic drive, the intracavity-energy budget and the vacuum-floor
+    diagnostics themselves are all statements about the symmetric-ordered field the
+    solver actually integrates; subtracting the pedestal there would double-count the
+    vacuum and break the energy balance. The rule of thumb: subtract when you are asking
+    "what would the instrument read?", keep the pedestal when you are asking "how much
+    energy is in the cavity?".
+
+    STATISTICS
+    ----------
+    Subtraction removes the vacuum's BIAS, not its VARIANCE. A single-snapshot vacuum mode
+    is exponentially distributed with mean and standard deviation both equal to the
+    pedestal, so the residual of a pure-vacuum mode is a zero-mean random variable of
+    order the pedestal itself -- individual residuals are routinely NEGATIVE. Averaging
+    ``N`` independent snapshots reduces the residual's standard error to
+    ``pedestal / sqrt(N)`` but never to zero, so a feature is only resolvable once it
+    exceeds that standard error. Use ``clip=False`` whenever you intend to average,
+    fit, or attach an error bar: clipping at zero turns a zero-mean residual into a
+    positively biased one and destroys exactly the cancellation the averaging relies on.
+    ``clip=True`` is for display only (a dB axis cannot render a negative power).
+
+    Args:
+        e_field: Either the complex fast-time field ``E(tau)`` (any shape, transformed
+            along the LAST axis) or an already-formed ``|FFT(E)|^2`` power spectrum. A
+            complex input is FFT'd (NOT fftshifted -- the caller owns the mode ordering);
+            a real input is treated as an already-computed power spectrum and validated
+            to be non-negative.
+        n_tau: Number of fast-time grid points, i.e. the FFT length that set the
+            normalization. Taken as an argument rather than inferred from the array
+            shape, so a truncated or masked spectrum still subtracts the right pedestal.
+        hbar_omega0: Photon energy ``hbar*omega0`` [J] (see
+            :func:`simulator.lle_solver.hbar_omega0_from_config`).
+        clip: ``True`` (default) floors the result at 0; ``False`` returns the signed
+            residual.
+
+    Returns:
+        float64 array of the same shape as the input spectrum, in the same units as
+        ``|FFT(E)|^2``.
+    """
+    n_tau = int(n_tau)
+    if n_tau <= 0:
+        raise ValueError(f"n_tau must be a positive integer, got {n_tau}")
+    hbar_omega0 = float(hbar_omega0)
+    if not (hbar_omega0 > 0.0) or not math.isfinite(hbar_omega0):
+        raise ValueError(
+            f"hbar_omega0 must be a positive, finite photon energy [J], "
+            f"got {hbar_omega0!r}"
+        )
+
+    arr = np.asarray(e_field)
+    if np.iscomplexobj(arr):
+        power = np.abs(np.fft.fft(arr.astype(np.complex128), axis=-1)) ** 2
+    else:
+        power = np.asarray(arr, dtype=np.float64)
+        if np.any(power < 0.0):
+            raise ValueError(
+                "real-valued input is treated as |FFT(E)|^2 and must be "
+                "non-negative; pass the complex field to have the FFT taken here"
+            )
+    if not np.all(np.isfinite(power)):
+        raise ValueError("spectrum contains non-finite (NaN/Inf) values")
+
+    vacuum_bias = float(n_tau) ** 2 * hbar_omega0 / 2.0
+    residual = power - vacuum_bias
+    return np.maximum(residual, 0.0) if clip else residual
+
+
 def average_power_spectrum(snapshots, *, is_power: bool = False,
                            mode_index=None):
     """Cycle/slow-time-average |a_mu|^2 over a stack of snapshots (LINEAR power).
