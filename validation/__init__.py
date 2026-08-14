@@ -19,6 +19,18 @@ analytic_cw
     solver's own discrete map (the integrator target, reproduced to ~1e-14).
     The gap between them — a first-order-in-dt mean-field truncation of size
     ~kappa*t_r/2 = 3.1e-3 — is measured, not assumed; see its module docstring.
+mms
+    Method of Manufactured Solutions: a smooth field is chosen first, the
+    forcing that makes it an exact solution is derived symbolically, and the
+    solver is run with that forcing. Unlike self-convergence this pins the
+    scheme's order AND that it converges to the right PDE.
+convergence
+    Order-of-accuracy verification built on ``mms``: temporal (three thermal
+    configurations), spatial (spectral), and weak (noise-on) studies.
+    FINDING: the shipping scheme is FIRST order, for two independent reasons --
+    the drive kick sits outside the linear half-step (non-palindromic), and the
+    field<->thermal coupling is lagged. Both fixes are opt-in, default-off flags
+    on ``solve_lle_ssfm_jax``; see that module's docstring.
 figures
     Standalone figure scripts for the modules above.
 
@@ -29,4 +41,4 @@ each has its own harness.
 
 from __future__ import annotations
 
-__all__ = ["analytic_cw", "figures", "noise_off_identity"]
+__all__ = ["analytic_cw", "convergence", "figures", "mms", "noise_off_identity"]

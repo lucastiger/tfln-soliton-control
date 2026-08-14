@@ -11,8 +11,12 @@ fig_analytic_cw
     The two-panel companion to :mod:`validation.analytic_cw`: the bistable
     CW S-curve (analytic vs solver) and the relative-residual spectrum against
     both exact references.
+fig_convergence
+    The two-panel companion to :mod:`validation.convergence`: the deterministic
+    dt-refinement log-log with reference slopes (production vs fixed scheme),
+    and the weak-order fit.
 """
 
 from __future__ import annotations
 
-__all__ = ["fig_analytic_cw"]
+__all__ = ["fig_analytic_cw", "fig_convergence"]

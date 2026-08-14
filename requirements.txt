@@ -8,3 +8,4 @@ pyyaml
 tqdm
 h5py
 einops
+sympy
