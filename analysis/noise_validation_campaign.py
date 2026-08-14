@@ -522,6 +522,18 @@ def workstream1(out_dir, seeds, quick, numerics=PRODUCTION_NUMERICS):
     span_on_norm = three_db_span(
         mu, normal_ordered_spectrum(mean_lin, n_tau, hbar_omega0, clip=True),
         {"fsr_hz": fsr_hz})["span_ghz"]
+    # ...and the SAME estimator on the SYMMETRIC-ordered ensemble mean. Without
+    # this control the normally-ordered span could only be compared against
+    # three_db_span_ghz_on_mean, which is the mean of PER-SEED spans -- a
+    # different estimator, and a biased one for this metric: single-seed wings
+    # are noisy, noise pushes the -3 dB crossings outward, and averaging spectra
+    # before measuring suppresses that. Comparing the two would therefore
+    # conflate the ordering change with the estimator change and could make a
+    # pedestal-driven "broadening" out of an averaging artifact (or vice versa).
+    # With this key the two effects separate:
+    #   symmetric per-seed mean  vs  symmetric ensemble mean  -> estimator effect
+    #   symmetric ensemble mean  vs  normally-ordered mean    -> ordering effect
+    span_on_sym_ens = three_db_span(mu, mean_lin, {"fsr_hz": fsr_hz})["span_ghz"]
 
     # Dispersion canary: every OFF peak sits at its phase-matched crossing, and
     # every peak that still RESOLVES above the risen floor stays within +/-2 modes.
@@ -657,6 +669,7 @@ def workstream1(out_dir, seeds, quick, numerics=PRODUCTION_NUMERICS):
         "three_db_span_ghz_on_mean": span_mean,
         "three_db_span_ghz_on_std": span_std,
         "three_db_span_ghz_on_normal_ordered": float(span_on_norm),
+        "three_db_span_ghz_on_symmetric_ensemble_mean": float(span_on_sym_ens),
         "comb_fraction_off": float(intracavity_comb_fraction(mu, spec_off)),
         "comb_fraction_on_mean": comb_mean,
         "comb_fraction_on_std": comb_std,
@@ -712,8 +725,11 @@ def workstream1(out_dir, seeds, quick, numerics=PRODUCTION_NUMERICS):
           f"exactly, its variance does not.")
     print(f"  comb fraction (normally ordered): OFF {comb_fraction_off_norm:.4f} | "
           f"ON {comb_fraction_on_norm:.4f}")
-    print(f"  3 dB span     (normally ordered): ON {span_on_norm:.2f} GHz "
-          f"(symmetric-ordered ON mean {span_mean:.2f} GHz)")
+    print(f"  3 dB span [GHz]: OFF {block['three_db_span_ghz_off']:.2f} | ON "
+          f"per-seed mean {span_mean:.2f} | ON ensemble mean {span_on_sym_ens:.2f} "
+          f"(symmetric) -> {span_on_norm:.2f} (normally ordered)")
+    print(f"    estimator effect {span_on_sym_ens - span_mean:+.2f} GHz, "
+          f"ordering effect {span_on_norm - span_on_sym_ens:+.2f} GHz")
     print(f"  3 dB span  : OFF {block['three_db_span_ghz_off']:.2f} GHz | "
           f"ON {span_mean:.2f} +/- {span_std:.2f} GHz")
     print(f"  comb frac  : OFF {block['comb_fraction_off']:.4f} | "
