@@ -103,10 +103,17 @@ from analysis.run_detuning_sweep import (  # noqa: E402
 from analysis.spectral_metrics import (  # noqa: E402
     detect_power_steps,
     intracavity_comb_fraction,
+    normal_ordered_spectrum,
     single_dks_region,
     soliton_count_transitions,
     three_db_span,
 )
+
+#: Significance (in units of the ensemble-mean standard error) that a
+#: normally-ordered spectral residual must reach to be called RESOLVED. The
+#: conventional detection bar; see the W1 docstring for why the gate is a
+#: significance test rather than a comparison against the pedestal itself.
+RESOLVE_SIGMA = 3.0
 from simulator.lle_solver import _load_config, hbar_omega0_from_config, resolve_cavity_rates  # noqa: E402
 from simulator.noise_models import TRNoise  # noqa: E402
 
@@ -264,7 +271,40 @@ def _record(cav, dw, n_tau, cfgp, e0, dt0, settle_rt, record_rt, seed,
 # Workstream 1 -- DW-peak survival under the full noise stack (flagship)
 # ---------------------------------------------------------------------------
 def workstream1(out_dir, seeds, quick, numerics=PRODUCTION_NUMERICS):
-    """Ensemble full-stack ON vs deterministic OFF at OPERATING_DW_KAPPA."""
+    """Ensemble full-stack ON vs deterministic OFF at OPERATING_DW_KAPPA.
+
+    Spectral ordering, and why the DW gate is a significance test
+    -------------------------------------------------------------
+    The solver integrates in the truncated-Wigner c-number limit, whose moments
+    are SYMMETRICALLY ordered: every mode carries half a photon of vacuum, so the
+    raw ensemble-mean |fft(E)|^2 sits on a flat pedestal n_tau^2*hbar*omega0/2
+    (~ -82 dB rel. pump here). An OSA or photodiode measures <a^dagger a> --
+    NORMALLY ordered -- and reads exactly zero for the vacuum, so every quantity
+    below that an experiment could see is ALSO reported after subtracting that
+    pedestal with analysis.spectral_metrics.normal_ordered_spectrum.
+
+    Both orderings are reported side by side. The symmetric-ordered numbers are
+    kept because they are the right ones for the floor diagnostics and the energy
+    bookkeeping (the empirical far-wing floor, the broadening budget, W5's modal
+    energy and P_abs terms) -- subtracting the pedestal there would double-count
+    the vacuum and break the energy balance.
+
+    The DW survival gate is normally ordered AND is a significance test, not a
+    comparison against the pedestal. "Below the vacuum floor" is not a physical
+    statement about detectability: the pedestal is a representation artifact that
+    subtracts exactly, so it biases the spectrum without limiting it. What DOES
+    limit detectability is the vacuum's VARIANCE, which subtraction leaves behind
+    and only averaging reduces. The gate is therefore
+
+        residual(mu) = mean_lin(mu) - pedestal   >   RESOLVE_SIGMA * sem(mu),
+
+    with sem(mu) = std across seeds / sqrt(seeds) -- an EMPIRICAL standard error
+    of the ensemble mean, so it already accounts for the within-record snapshot
+    correlation (each seed contributes one record-mean sample) instead of
+    assuming an independence factor. A peak below that bar is not "buried under
+    the vacuum"; it is below this ensemble's noise floor, and the report says how
+    much bigger an ensemble would resolve it.
+    """
     n_tau = 16384                        # required to resolve DW peaks at |mu|~3000-3300
     settle_off = 800 if quick else 2000
     settle_on = 200 if quick else 1000
@@ -316,6 +356,23 @@ def workstream1(out_dir, seeds, quick, numerics=PRODUCTION_NUMERICS):
     p_pump_on = float(mean_lin[pump_bin])
     p_pump_off = float(spec_off[pump_bin])
 
+    # --- normally-ordered (instrument-comparable) ON spectrum ---------------
+    # Signed residual: clip=False is mandatory here. Subtraction removes the
+    # vacuum's BIAS, not its variance, so a pure-vacuum mode's residual is
+    # zero-mean and negative about half the time; clipping would turn that into a
+    # positively biased pedestal remnant and defeat the whole point.
+    mean_norm = normal_ordered_spectrum(mean_lin, n_tau, hbar_omega0, clip=False)
+    spec_off_norm = normal_ordered_spectrum(spec_off, n_tau, hbar_omega0,
+                                            clip=False)
+    # Empirical standard error of the ensemble mean, per mode. Each seed
+    # contributes ONE record-mean sample, so the within-record snapshot
+    # correlation is already inside std_lin -- no independence factor assumed.
+    sem_lin = std_lin / math.sqrt(seeds) if seeds > 1 else np.full(n_tau, np.inf)
+    sem_floor_rel_pump_db = (
+        10.0 * math.log10(float(np.median(sem_lin[np.isfinite(sem_lin)])) / p_pump_on)
+        if seeds > 1 else float("nan")
+    )
+
     # DW peaks are DISPERSION-set: the phase-matched crossings D_int(mu)=delta_omega
     # depend only on the measured d_int_grid and the (programmed) detuning, so they
     # are IDENTICAL ON and OFF by construction -- that identity is the rigorous
@@ -339,7 +396,7 @@ def workstream1(out_dir, seeds, quick, numerics=PRODUCTION_NUMERICS):
     # then moves > +/-2 modes is the dispersion/seeding-bug canary. A submerged
     # peak's argmax is meaningless (it tracks floor fluctuations), so it is
     # reported as physics (vacuum-floor burial), never as a position-shift bug.
-    SURVIVE_PROM_DB = 3.0        # ON prominence over local floor to call a peak "resolved"
+    SURVIVE_PROM_DB = 3.0        # legacy symmetric-ordered prominence criterion
     peak_rows, resolvable_shift = [], []
     for p in sorted(peaks_off, key=lambda q: q["mu"]):
         side = "red" if p["mu"] < 0 else "blue"
@@ -354,7 +411,29 @@ def workstream1(out_dir, seeds, quick, numerics=PRODUCTION_NUMERICS):
         on_local_floor_lin = float(np.median(mean_lin[local]))
         level_on_at_off_db = 10.0 * math.log10(max(mean_lin[bin_dw], 1e-300) / p_pump_on)
         prom_on_at_off = level_on_at_off_db - 10.0 * math.log10(on_local_floor_lin / p_pump_on)
-        survives_on = bool(prom_on_at_off >= SURVIVE_PROM_DB)
+        # LEGACY criterion (symmetric-ordered prominence over the local pedestal),
+        # retained for continuity with the previously committed report. It is NOT
+        # the gate any more -- see the workstream docstring.
+        survives_prom_legacy = bool(prom_on_at_off >= SURVIVE_PROM_DB)
+
+        # --- normally-ordered significance: THE GATE ------------------------
+        residual_lin = float(mean_norm[bin_dw])
+        sem_here = float(sem_lin[bin_dw])
+        significance = residual_lin / sem_here if sem_here > 0 else float("nan")
+        survives_on = bool(np.isfinite(significance) and significance >= RESOLVE_SIGMA)
+        level_on_norm_db = (
+            10.0 * math.log10(residual_lin / p_pump_on) if residual_lin > 0.0
+            else float("nan")          # residual consistent with (or below) zero
+        )
+        # How much bigger an ensemble would resolve the DETERMINISTIC peak at
+        # RESOLVE_SIGMA? sem scales as 1/sqrt(n_seeds), so the factor is
+        # (RESOLVE_SIGMA * sem / P_off_peak)^2 in seeds.
+        p_off_peak_lin = float(spec_off[bin_dw])
+        seed_factor_to_resolve = (
+            (RESOLVE_SIGMA * sem_here / p_off_peak_lin) ** 2
+            if p_off_peak_lin > 0.0 and np.isfinite(sem_here) else float("inf")
+        )
+
         # ON argmax within the +/-30 recoil window (only meaningful if it survives).
         win = (mu >= cross - 30) & (mu <= cross + 30)
         mu_on_argmax = int(mu[win][int(np.argmax(mean_lin[win]))])
@@ -372,8 +451,24 @@ def workstream1(out_dir, seeds, quick, numerics=PRODUCTION_NUMERICS):
             "level_on_at_off_mode_db": level_on_at_off_db,
             "snr_db_off": float(snr_off),
             "prominence_on_at_off_db": float(prom_on_at_off),
+            # --- the gate (normally ordered, significance test) -------------
             "survives_above_vacuum_floor": survives_on,
-            "submerged_below_vacuum_floor_db": float(floor_db_rel_pump_off - level_off_db),
+            "survival_criterion": (
+                f"normally-ordered residual > {RESOLVE_SIGMA:g} x the empirical "
+                f"standard error of the ensemble-mean spectrum at that mode"),
+            "level_on_normal_ordered_db": level_on_norm_db,
+            "residual_normal_ordered_lin": residual_lin,
+            "sem_ensemble_mean_lin": sem_here,
+            "residual_significance_sigma": float(significance),
+            "seed_factor_to_resolve_off_peak": float(seed_factor_to_resolve),
+            # --- legacy symmetric-ordered numbers, kept for continuity ------
+            # Key names preserved: tests/test_noise_validation_campaign.py pins
+            # this schema. "submerged_below_vacuum_floor_db" remains the
+            # SYMMETRIC-ordered depth below the pedestal -- a representation
+            # statement, not a detectability one; the gate is the sigma above.
+            "survives_symmetric_prominence_legacy": survives_prom_legacy,
+            "submerged_below_vacuum_floor_db": float(
+                floor_db_rel_pump_off - level_off_db),
             "prominence_db_off": float(p["prominence_db"]),
         })
 
@@ -391,12 +486,48 @@ def workstream1(out_dir, seeds, quick, numerics=PRODUCTION_NUMERICS):
     # factor-3 tolerance band on the wing-level change (in dB, ~4.77 dB).
     budget_tol_db = 10.0 * math.log10(3.0)
     budget_ok = bool(abs(measured_change_db - vacuum_change_db) <= budget_tol_db + abs(pump_jitter_db) + 1e-9)
+    # The budget above is deliberately SYMMETRIC-ordered: it is the internal
+    # consistency check "ON wing == OFF wing + pedestal", i.e. bookkeeping of the
+    # field the solver integrates, and normal-ordering it would subtract the very
+    # term it exists to verify. What an OSA would read in that band is the
+    # normally-ordered residual, reported separately here.
+    on_wing_norm_lin = float(np.median(mean_norm[mid]))
+    on_wing_norm_sem = float(np.median(sem_lin[mid])) if seeds > 1 else float("inf")
+    on_wing_norm_sigma = (
+        on_wing_norm_lin / on_wing_norm_sem if np.isfinite(on_wing_norm_sem)
+        and on_wing_norm_sem > 0 else float("nan")
+    )
+
+    # --- instrument-comparable comb metrics (normally ordered) --------------
+    # Computed on the ENSEMBLE-MEAN spectrum, where the standard error is
+    # smallest; a per-seed version would have sqrt(seeds) more residual noise and,
+    # for the comb fraction, would need clipping (and hence a positive bias).
+    # The comb fraction sums EVERY mode, so it is the pedestal-sensitive metric:
+    # summing the SIGNED residual keeps it unbiased.
+    tot_norm = float(np.sum(mean_norm))
+    comb_fraction_on_norm = (
+        float((tot_norm - float(mean_norm[pump_bin])) / tot_norm)
+        if tot_norm > 0.0 else float("nan")
+    )
+    tot_off_norm = float(np.sum(spec_off_norm))
+    comb_fraction_off_norm = (
+        float((tot_off_norm - float(spec_off_norm[pump_bin])) / tot_off_norm)
+        if tot_off_norm > 0.0 else float("nan")
+    )
+    # The 3 dB span is a comb-CORE envelope metric: its own 60 dB floor mask
+    # already discards the pedestal-dominated wings, so it should be nearly
+    # ordering-independent. clip=True is safe (and required by the metric's
+    # non-negativity check) precisely because the retained lines sit far above
+    # the pedestal.
+    span_on_norm = three_db_span(
+        mu, normal_ordered_spectrum(mean_lin, n_tau, hbar_omega0, clip=True),
+        {"fsr_hz": fsr_hz})["span_ghz"]
 
     # Dispersion canary: every OFF peak sits at its phase-matched crossing, and
     # every peak that still RESOLVES above the risen floor stays within +/-2 modes.
     # Submerged peaks (below the vacuum floor) are physics, not a position bug.
     n_survive = sum(r["survives_above_vacuum_floor"] for r in peak_rows)
-    n_submerged = len(peak_rows) - n_survive
+    n_unresolved = len(peak_rows) - n_survive
     off_at_crossing = all(r["off_peak_at_crossing"] for r in peak_rows) if peak_rows else False
     max_resolvable_shift = int(max((abs(s) for s in resolvable_shift), default=0))
     positions_invariant = bool(off_at_crossing and max_resolvable_shift <= 2)
@@ -418,9 +549,24 @@ def workstream1(out_dir, seeds, quick, numerics=PRODUCTION_NUMERICS):
                     label=r"full stack ON: ensemble mean $\pm$ std")
     ax.plot(mu, on_db, lw=0.6, color="C1", alpha=0.9)
     ax.axhline(floor_db_rel_pump, color="k", ls="--", lw=1.0,
-               label=r"$\hbar\omega_0/2$ vacuum floor")
+               label=r"$\hbar\omega_0/2$ pedestal (symmetric-ordered)")
+    # Instrument-comparable trace: pedestal subtracted. Only the positive part is
+    # renderable on a dB axis -- the modes that vanish here are exactly the ones
+    # whose residual is consistent with zero, which is the point.
+    with np.errstate(divide="ignore", invalid="ignore"):
+        norm_db_trace = np.where(
+            mean_norm > 0.0,
+            10.0 * np.log10(np.maximum(mean_norm, 1e-300) / p_pump_on),
+            np.nan)
+    ax.plot(mu, norm_db_trace, lw=0.5, color="C2", alpha=0.85,
+            label="full stack ON, normally ordered (what an OSA reads)")
+    if np.isfinite(sem_floor_rel_pump_db):
+        ax.axhline(sem_floor_rel_pump_db + 10.0 * math.log10(RESOLVE_SIGMA),
+                   color="C3", ls=":", lw=1.2,
+                   label=rf"{RESOLVE_SIGMA:g}$\sigma$ detectability limit "
+                         rf"({seeds} seeds)")
     for r in peak_rows:
-        tag = "buried" if not r["survives_above_vacuum_floor"] else "survives"
+        tag = "unresolved" if not r["survives_above_vacuum_floor"] else "resolved"
         ax.annotate(f"DW $\\mu$={r['mu_off']}\nOFF {r['level_db_off']:.0f} dB\n({tag})",
                     xy=(r["mu_off"], r["level_db_off"]),
                     xytext=(r["mu_off"], r["level_db_off"] - 26),
@@ -447,20 +593,29 @@ def workstream1(out_dir, seeds, quick, numerics=PRODUCTION_NUMERICS):
         axs[0].set_title("DW position (dispersion-set)")
         axs[1].bar(x - 0.15, [r["level_db_off"] for r in peak_rows], 0.3, label="OFF peak")
         axs[1].bar(x + 0.15, [r["level_on_at_off_mode_db"] for r in peak_rows], 0.3,
-                   label="ON at that mode")
+                   label="ON at that mode (symmetric)")
         axs[1].axhline(floor_db_rel_pump, color="k", ls="--", lw=1.0,
-                       label=r"$\hbar\omega_0/2$")
+                       label=r"$\hbar\omega_0/2$ pedestal")
+        if np.isfinite(sem_floor_rel_pump_db):
+            axs[1].axhline(sem_floor_rel_pump_db + 10.0 * math.log10(RESOLVE_SIGMA),
+                           color="C3", ls=":", lw=1.2,
+                           label=rf"{RESOLVE_SIGMA:g}$\sigma$ detectability")
         axs[1].set_ylabel("level rel. pump [dB]")
-        axs[1].set_title("DW level vs vacuum floor")
-        axs[2].bar(x, [r["snr_db_off"] for r in peak_rows], 0.4, color="C3")
+        axs[1].set_title("DW level vs pedestal and detectability")
+        axs[2].bar(x, [r["residual_significance_sigma"] for r in peak_rows], 0.4,
+                   color="C3")
+        axs[2].axhline(RESOLVE_SIGMA, color="k", ls=":", lw=1.0,
+                       label=rf"{RESOLVE_SIGMA:g}$\sigma$")
         axs[2].axhline(0.0, color="k", lw=0.8)
-        axs[2].set_ylabel("OFF SNR over vacuum floor [dB]")
-        axs[2].set_title("DW peak SNR (OFF)")
+        axs[2].set_ylabel(r"normally-ordered residual [$\sigma$]")
+        axs[2].set_title("DW detection significance (ON)")
+        axs[2].legend(fontsize=6)
         for a in axs[:2]:
             a.legend(fontsize=6)
         for a in axs:
             a.set_xticks(x); a.set_xticklabels(sides)
-        fig.suptitle("DW peak metrics: negative OFF SNR = below the ħω₀/2 floor")
+        fig.suptitle("DW peak metrics: detectability is set by the ensemble "
+                     "s.e., not by the pedestal")
         fig.savefig(out_dir / "dw_peak_metrics.png")
         plt.close(fig)
 
@@ -474,15 +629,49 @@ def workstream1(out_dir, seeds, quick, numerics=PRODUCTION_NUMERICS):
         "dw_positions_invariant_within_2_modes": positions_invariant,
         "dw_off_peaks_at_phase_match_crossing": off_at_crossing,
         "max_resolvable_dw_position_shift_modes": max_resolvable_shift,
+        # Key names preserved (pinned by tests/test_noise_validation_campaign.py);
+        # the COUNTS now come from the normally-ordered significance gate, so
+        # "surviving" means RESOLVED above this ensemble's noise floor and
+        # "submerged" means UNRESOLVED. The sum is still the peak count.
         "n_dw_peaks_surviving_above_floor": int(n_survive),
-        "n_dw_peaks_submerged_below_floor": int(n_submerged),
+        "n_dw_peaks_submerged_below_floor": int(n_unresolved),
+        "n_dw_peaks_resolved_normal_ordered": int(n_survive),
+        "n_dw_peaks_unresolved_normal_ordered": int(n_unresolved),
+        "dw_resolve_sigma": float(RESOLVE_SIGMA),
+        "ensemble_mean_sem_median_db_rel_pump": float(sem_floor_rel_pump_db),
+        "spectral_ordering_note": (
+            "Keys without a '_normal_ordered' suffix are SYMMETRIC-ordered "
+            "(truncated-Wigner), i.e. they include the n_tau^2*hbar*omega0/2 "
+            "half-photon pedestal the solver actually integrates -- correct for "
+            "the floor diagnostics and the energy bookkeeping, and NOT what an "
+            "OSA reads. Keys suffixed '_normal_ordered' have that pedestal "
+            "subtracted (analysis.spectral_metrics.normal_ordered_spectrum, "
+            "clip=False) and are the instrument-comparable ones. NOTE the "
+            "semantics of n_dw_peaks_surviving_above_floor / "
+            "n_dw_peaks_submerged_below_floor changed: the counts now come from "
+            "the normally-ordered significance gate (resolved / unresolved "
+            "against this ensemble's standard error), not from a comparison "
+            "against the pedestal. The old symmetric-ordered verdict is kept "
+            "per peak as survives_symmetric_prominence_legacy."),
         "three_db_span_ghz_off": float(three_db_span(mu, spec_off, {"fsr_hz": fsr_hz})["span_ghz"]),
         "three_db_span_ghz_on_mean": span_mean,
         "three_db_span_ghz_on_std": span_std,
+        "three_db_span_ghz_on_normal_ordered": float(span_on_norm),
         "comb_fraction_off": float(intracavity_comb_fraction(mu, spec_off)),
         "comb_fraction_on_mean": comb_mean,
         "comb_fraction_on_std": comb_std,
+        "comb_fraction_on_normal_ordered": comb_fraction_on_norm,
+        "comb_fraction_off_normal_ordered": comb_fraction_off_norm,
         "empirical_far_wing_floor_multiple_of_vacuum": emp_floor_mult,
+        "mid_wing_normal_ordered": {
+            "band_modes": [1000, 1600],
+            "residual_lin": on_wing_norm_lin,
+            "sem_lin": on_wing_norm_sem,
+            "significance_sigma": float(on_wing_norm_sigma),
+            "db_rel_pump": (
+                10.0 * math.log10(on_wing_norm_lin / p_pump_on)
+                if on_wing_norm_lin > 0.0 else float("nan")),
+        },
         "broadening_budget": {
             "mid_wing_band_modes": [1000, 1600],
             "off_wing_db_rel_pump": 10.0 * math.log10(off_wing_lin / p_pump_off),
@@ -499,19 +688,32 @@ def workstream1(out_dir, seeds, quick, numerics=PRODUCTION_NUMERICS):
     print("\n" + "=" * 72)
     print("GATE W1 -- DW-peak survival under the full noise stack")
     print("=" * 72)
-    print(f"  vacuum floor = {floor_db_rel_pump_off:.1f} dB rel. pump")
-    print(f"{'peak':>6} {'mu_OFF':>7} {'cross':>7} {'lvl_OFF':>8} {'SNR_OFF':>8} "
-          f"{'ON@mu':>8} {'promON':>7} {'survives':>9}  [dB]")
+    print(f"  symmetric-ordered vacuum pedestal = {floor_db_rel_pump_off:.1f} dB rel. pump "
+          f"(NOT an instrument floor)")
+    print(f"  ensemble-mean s.e. (median)       = {sem_floor_rel_pump_db:.1f} dB rel. pump "
+          f"<- the detectability limit")
+    print(f"{'peak':>6} {'mu_OFF':>7} {'cross':>7} {'lvl_OFF':>8} "
+          f"{'ON sym':>8} {'ON norm':>9} {'sigma':>7} {'x seeds':>10} {'resolved':>9}")
     for r in peak_rows:
+        norm_db = r["level_on_normal_ordered_db"]
+        norm_s = f"{norm_db:>9.1f}" if np.isfinite(norm_db) else f"{'<=0':>9}"
         print(f"{r['side']:>6} {r['mu_off']:>7d} {r['crossing_mu']:>7.0f} "
-              f"{r['level_db_off']:>8.1f} {r['snr_db_off']:>+8.1f} "
-              f"{r['level_on_at_off_mode_db']:>8.1f} {r['prominence_on_at_off_db']:>+7.1f} "
+              f"{r['level_db_off']:>8.1f} {r['level_on_at_off_mode_db']:>8.1f} "
+              f"{norm_s} {r['residual_significance_sigma']:>+7.2f} "
+              f"{r['seed_factor_to_resolve_off_peak']:>10.1e} "
               f"{str(r['survives_above_vacuum_floor']):>9}")
     print(f"\n  OFF peaks at phase-match crossing (dispersion intact): {off_at_crossing}")
     print(f"  DW positions invariant (resolvable, |shift|<=2): {positions_invariant} "
           f"(max resolvable shift {max_resolvable_shift})")
-    print(f"  DW peaks surviving above vacuum floor: {n_survive}/{len(peak_rows)}  "
-          f"(submerged: {n_submerged})")
+    print(f"  DW peaks RESOLVED (normally ordered, >={RESOLVE_SIGMA:g} sigma): "
+          f"{n_survive}/{len(peak_rows)}  (unresolved: {n_unresolved})")
+    print(f"    An unresolved peak is below THIS ensemble's vacuum-fluctuation "
+          f"noise floor,\n    not below a physical floor: the pedestal subtracts "
+          f"exactly, its variance does not.")
+    print(f"  comb fraction (normally ordered): OFF {comb_fraction_off_norm:.4f} | "
+          f"ON {comb_fraction_on_norm:.4f}")
+    print(f"  3 dB span     (normally ordered): ON {span_on_norm:.2f} GHz "
+          f"(symmetric-ordered ON mean {span_mean:.2f} GHz)")
     print(f"  3 dB span  : OFF {block['three_db_span_ghz_off']:.2f} GHz | "
           f"ON {span_mean:.2f} +/- {span_std:.2f} GHz")
     print(f"  comb frac  : OFF {block['comb_fraction_off']:.4f} | "
@@ -1168,11 +1370,23 @@ def workstream5(out_dir, seeds, quick, w1_ens=None, numerics=PRODUCTION_NUMERICS
     t_r = cav.t_r
 
     # (i) far-wing modal energy -> hbar*omega0/2 per mode.
+    # SYMMETRIC-ordered throughout: this is the vacuum-floor diagnostic itself,
+    # so subtracting the pedestal would subtract the quantity under test.
     wing = (np.abs(mu) >= 3600) & (np.abs(mu) <= 5000)
     modal_energy_j = mean_lin / n_tau ** 2               # E_mu = |fft|^2 / n_tau^2
     far_wing_energy = float(np.median(modal_energy_j[wing]))
     floor_multiple = far_wing_energy / (hbar_omega0 / 2.0)
     far_wing_db_rel_pump = 10.0 * math.log10(float(np.median(mean_lin[wing])) / p_pump_on)
+
+    # (i-b) The same band, NORMALLY ordered -- the one W5 quantity an experiment
+    # could see. The far wing is pure vacuum, so an OSA reads zero there: this
+    # residual must be consistent with zero, which is the instrument-facing
+    # restatement of "the floor is at hbar*omega0/2". Reported as a multiple of
+    # the symmetric pedestal so it is directly comparable with floor_multiple
+    # above (1.000 there <-> 0.000 here).
+    far_wing_norm_lin = float(np.median(
+        normal_ordered_spectrum(mean_lin, n_tau, hbar_omega0, clip=False)[wing]))
+    far_wing_norm_multiple = far_wing_norm_lin / (n_tau ** 2 * hbar_omega0 / 2.0)
 
     # (ii) intracavity-energy fluctuation vs the shot-noise scale.
     # The solver's U_int = (total field energy) * t_r (u_int = sum_tau|E|^2*t_r/n_tau,
@@ -1234,6 +1448,17 @@ def workstream5(out_dir, seeds, quick, w1_ens=None, numerics=PRODUCTION_NUMERICS
         "far_wing_floor_multiple_of_half_hbar_omega0": floor_multiple,
         "far_wing_db_rel_pump": far_wing_db_rel_pump,
         "floor_within_factor_3": bool(1.0 / 3.0 <= floor_multiple <= 3.0),
+        "far_wing_normal_ordered_lin": far_wing_norm_lin,
+        "far_wing_normal_ordered_multiple_of_pedestal": far_wing_norm_multiple,
+        "spectral_ordering_note": (
+            "The floor diagnostics and every energy term here (modal energy, "
+            "intracavity energy, shot-noise scale, P_abs) are SYMMETRIC-ordered "
+            "by design -- they describe the field the solver integrates, and "
+            "normal-ordering them would double-count the vacuum and break the "
+            "energy balance. Only far_wing_normal_ordered_* is "
+            "instrument-comparable: the far wing is pure vacuum, so an OSA reads "
+            "zero there and that multiple should sit near 0.000 while "
+            "far_wing_floor_multiple_of_half_hbar_omega0 sits near 1.000."),
         "intracavity_energy_mean_j": e_mean,
         "intracavity_energy_photons": n_photons,
         "intracavity_energy_std_j": e_std,
@@ -1253,7 +1478,10 @@ def workstream5(out_dir, seeds, quick, w1_ens=None, numerics=PRODUCTION_NUMERICS
     print("=" * 72)
     print(f"  far-wing modal energy = {far_wing_energy:.4e} J = "
           f"{floor_multiple:.3f} x (ħω₀/2)   [within factor 3: {block['floor_within_factor_3']}]")
-    print(f"  far-wing level = {far_wing_db_rel_pump:.1f} dB rel. pump")
+    print(f"  far-wing level = {far_wing_db_rel_pump:.1f} dB rel. pump "
+          f"(symmetric-ordered)")
+    print(f"  far-wing NORMALLY ordered = {far_wing_norm_multiple:+.4f} x pedestal "
+          f"(an OSA reads 0 here; the wing is pure vacuum)")
     print(f"  intracavity energy E = {e_mean * 1e12:.3f} pJ ({n_photons:.2e} photons)")
     print(f"  energy-fluct std = {e_std:.3e} J | shot-noise scale "
           f"{shot_std:.3e} J | ratio {energy_fluct_ratio:.2f} (>=1 => classical excess)")
@@ -1283,10 +1511,16 @@ def _consolidated_summary(report: dict) -> None:
              str(w1.get("dw_off_peaks_at_phase_match_crossing")), "True"),
             ("W1 DW position invariance (resolvable shift, modes)",
              f"{w1.get('max_resolvable_dw_position_shift_modes')}", "<= 2"),
-            ("W1 DW peaks submerged below vacuum floor",
+            ("W1 DW peaks unresolved (normally ordered)",
              f"{w1.get('n_dw_peaks_submerged_below_floor')}/"
              f"{w1.get('n_dw_peaks_submerged_below_floor', 0) + w1.get('n_dw_peaks_surviving_above_floor', 0)}",
-             "physical (vacuum floor)"),
+             f"< {w1.get('dw_resolve_sigma', RESOLVE_SIGMA):g} sigma"),
+            ("W1 ensemble s.e. (detectability limit) [dB rel pump]",
+             f"{w1.get('ensemble_mean_sem_median_db_rel_pump', float('nan')):.1f}",
+             "sets what is visible"),
+            ("W1 comb fraction ON (normally ordered)",
+             f"{w1.get('comb_fraction_on_normal_ordered', float('nan')):.4f}",
+             f"~ OFF {w1.get('comb_fraction_off_normal_ordered', float('nan')):.4f}"),
             ("W1 wing change within vacuum+pump budget",
              str(w1.get("broadening_budget", {}).get("within_budget")), "True"),
             ("W1 far-wing floor / (n_tau^2 hbar w0/2)",
