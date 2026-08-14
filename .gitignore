@@ -10,3 +10,6 @@ runs/
 
 # Generated datasets (large; produced by data/dataset_generator.py)
 data/synthetic/
+
+# OS metadata (macOS Finder writes these into any directory it browses)
+.DS_Store
