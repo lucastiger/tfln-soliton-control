@@ -14,7 +14,7 @@ import math
 import warnings
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, Callable, NamedTuple
 
 import jax
 
@@ -686,6 +686,9 @@ def _single_trajectory_solver(
     mode_probe_indices: tuple[int, ...],      # static; FFT-BIN indices of probed modes, () = no probes (legacy trace)
     *,
     thermal_exponential: bool = False,        # static; True = exact exponential thermal update (see _thermal_step)
+    source_fn: "Callable[[jnp.ndarray], jnp.ndarray] | None" = None,  # static; MMS forcing S(tau,t), None = no forcing (legacy trace)
+    symmetric_drive: bool = False,            # static; True = half drive kick either side of L·N·L (2nd order), False = legacy single full kick
+    thermal_strang: bool = False,             # static; True = half thermal step either side of the field step (2nd order coupling), False = legacy lagged coupling
 ) -> dict[str, jnp.ndarray]:
     """Solve one detuning trajectory with SSFM + thermal Euler update.
 
@@ -737,6 +740,47 @@ def _single_trajectory_solver(
     held constant across the round trip's fine/sub-steps (thermal bandwidth
     << FSR). ``None`` (the default) selects the legacy linear operator via a
     Python branch — the disabled path traces zero extra ops.
+
+    ``source_fn`` / ``symmetric_drive`` / ``thermal_strang`` are the three
+    order-of-accuracy options exercised by ``validation/convergence.py``. All
+    three default to the legacy behaviour and are STATIC Python values, so the
+    default path traces the historical arithmetic token for token.
+
+    ``source_fn`` (default None) is a manufactured-solution forcing S(tau, t):
+    a jax-traceable callable taking the scalar sub-step time t [s] and
+    returning an (n_tau,) complex array, added to the field as S(t)*dt_sub in
+    the SAME place and the SAME way as the pump kick — so an MMS study
+    measures the order of the scheme as it actually runs, not of an idealized
+    one. None selects a Python branch that reuses the precomputed ``kick``
+    object directly, adding no ops and no time arithmetic.
+
+    ``symmetric_drive`` (default False) fixes the scheme's order. The legacy
+    sub-step applies the whole drive as one Euler kick BEFORE L·N·L:
+
+        P(dt) . L(dt/2) . N(dt) . L(dt/2)
+
+    That composition is not palindromic, so despite the Strang core the method
+    is FIRST order overall — measured 1.02 on a self-convergence study, and
+    visible as the O(kappa*t_r) offset of the CW fixed point documented in
+    ``validation/analytic_cw.py``. With the flag on, the drive is split into
+    two half kicks straddling the Strang core:
+
+        P(dt/2) . L(dt/2) . N(dt) . L(dt/2) . P(dt/2)
+
+    which is palindromic and second order (measured 2.00). Enabling it changes
+    every trajectory, which is why it is opt-in and off by default.
+
+    ``thermal_strang`` (default False) does the same for the field<->thermal
+    coupling. ``thermal_exponential`` removes the truncation error of the
+    thermal ODE *given* P_abs, but the legacy COUPLING is still explicit and
+    lagged — the field step uses ΔT from the start of the step and the thermal
+    step uses P_abs from the end of it — so the coupled system stays first
+    order however exactly the ODE is solved. Measured: lagged+exponential
+    gives order 1.03 even with ``symmetric_drive`` on. With ``thermal_strang``
+    the ΔT update is split into two half steps sandwiching the field update,
+    and lagged+exponential -> 2.00. Euler stays first order either way (1.03),
+    as it should. Requires ``thermal_exponential`` to reach second order; on
+    its own it only symmetrizes the coupling.
 
     ``mode_probe_indices`` (static tuple of FFT-BIN indices; () = disabled)
     records the complex FFT amplitudes E~_mu of the probed modes every round
@@ -826,6 +870,21 @@ def _single_trajectory_solver(
         without RIN; the RIN-scaled kick otherwise).
         Returns (e_next, delta_t_next, u_int, delta_omega_eff).
         """
+        # Strang-coupled thermo-optic path (opt-in): advance ΔT by HALF a fine
+        # step from the START-of-step field BEFORE the field step, so the shift
+        # the field sees is the midpoint value and the two half-updates
+        # sandwich the field update symmetrically. See the ``thermal_coupling``
+        # note in the module docstring for why the default (lagged) coupling
+        # caps the coupled system at first order no matter how exactly the
+        # thermal ODE itself is integrated. Static Python branch: the default
+        # "lagged" path traces zero extra ops.
+        if thermal_strang:
+            u_int_pre = jnp.sum(jnp.abs(e_cur) ** 2) * (t_r / n_tau)
+            delta_t_cur = _thermal_step(
+                delta_t_cur, kappa_i * u_int_pre / t_r, dt_fine / 2.0,
+                thermal, thermal_exponential,
+            )
+
         # Deterministic thermal detuning shift. δω = ω_res − ω_pump, so heating
         # (dn/dT>0 → n↑ → ω_res↓) LOWERS δω: the shift enters with a minus sign.
         thermal_shift = -(omega0 / thermal["n0"]) * thermal["dn_dT"] * delta_t_cur
@@ -844,8 +903,34 @@ def _single_trajectory_solver(
 
         # n_substeps Strang sub-steps over dt_sub: pump kick, L·N·L (unrolled).
         e_sub = e_cur
-        for _ in range(n_substeps):
-            e_pumped = (e_sub + kick).astype(jnp.complex128)
+        for sub in range(n_substeps):
+            # The DRIVE (pump + optional manufactured source). Legacy path: one
+            # full-dt Euler kick applied BEFORE L·N·L, which makes the composite
+            # map non-palindromic and therefore FIRST order overall even though
+            # L·N·L is Strang. ``symmetric_drive`` (opt-in) splits it into two
+            # half kicks straddling L·N·L, restoring the palindrome and second
+            # order. Both branches are static Python — the default traces the
+            # legacy arithmetic token for token.
+            # With a TIME-DEPENDENT source the two half kicks must straddle the
+            # step in time as well as in position: leading half at t_sub,
+            # trailing half at t_sub + dt_sub. That is the trapezoidal rule and
+            # is second order; evaluating both halves at t_sub would be the
+            # left-endpoint rule and would cap the scheme at first order even
+            # with symmetric_drive on. For the constant pump (source_fn None)
+            # the two coincide, so ``drive_trail`` is the same object as
+            # ``drive_lead`` and no extra ops are traced.
+            if source_fn is None:
+                drive_lead = drive_trail = kick
+            else:
+                t_sub = (
+                    (step_idx * fine_cadence_M + m) * dt_fine + sub * dt_sub
+                )
+                drive_lead = kick + source_fn(t_sub) * dt_sub
+                drive_trail = kick + source_fn(t_sub + dt_sub) * dt_sub
+            if symmetric_drive:
+                e_pumped = (e_sub + drive_lead / 2.0).astype(jnp.complex128)
+            else:
+                e_pumped = (e_sub + drive_lead).astype(jnp.complex128)
             e_w = jnp.fft.fft(e_pumped)
             e_half = jnp.fft.ifft(e_w * h_half).astype(jnp.complex128)
             nl_phase = jnp.exp(1j * gamma * jnp.abs(e_half) ** 2 * dt_sub).astype(jnp.complex128)
@@ -855,6 +940,8 @@ def _single_trajectory_solver(
             if dealias_two_thirds:
                 e_w2 = e_w2 * mask_23
             e_sub = jnp.fft.ifft(e_w2 * h_half).astype(jnp.complex128)
+            if symmetric_drive:
+                e_sub = (e_sub + drive_trail / 2.0).astype(jnp.complex128)
         e_next = e_sub
 
         # Quantum-vacuum Langevin injection: after the sub-step loop, BEFORE the
@@ -887,8 +974,11 @@ def _single_trajectory_solver(
         # Single-pole thermal ODE advanced by dt_fine. thermal_exponential is a
         # STATIC Python bool, so the default (Euler) path traces exactly the
         # historical arithmetic and zero extra ops. See _thermal_step.
+        # Under thermal_strang the first half was already taken above, so this
+        # is the CLOSING half step, driven by the end-of-step P_abs.
         delta_t_next = _thermal_step(
-            delta_t_cur, p_abs, dt_fine, thermal, thermal_exponential
+            delta_t_cur, p_abs, dt_fine / 2.0 if thermal_strang else dt_fine,
+            thermal, thermal_exponential,
         )
         return e_next, delta_t_next, u_int, delta_omega_eff
 
@@ -1211,6 +1301,47 @@ _PER_TRAJ_THERMAL_EXP = jax.jit(
 )
 
 
+@functools.lru_cache(maxsize=None)
+def _per_traj_variant(
+    thermal_exponential: bool,
+    source_fn,
+    symmetric_drive: bool,
+    thermal_strang: bool,
+):
+    """Jitted solver for a NON-DEFAULT combination of the order-study options.
+
+    Built on demand and cached, using the same functools.partial-before-vmap
+    trick as ``_PER_TRAJ_THERMAL_EXP``: the options stay static Python values
+    inside the trace, and ``_PER_TRAJ``'s 32-POSITIONAL SIGNATURE — a public
+    surface that ``data/dataset_generator.py`` and
+    ``tests/test_quantum_noise.py`` both call with an explicit 32-argument
+    list — is left completely untouched.
+
+    ``solve_lle_ssfm_jax`` only routes here when at least one option is
+    non-default; the all-default call still goes to the module-level
+    ``_PER_TRAJ`` / ``_PER_TRAJ_THERMAL_EXP`` objects, so the legacy path keeps
+    its object identity and its compilation cache.
+
+    ``source_fn`` participates in the cache key, so each distinct forcing
+    callable gets its own compilation — pass a stable object (a module-level
+    function or a cached closure), not a fresh lambda per call, or every call
+    recompiles.
+    """
+    return jax.jit(
+        jax.vmap(
+            functools.partial(
+                _single_trajectory_solver,
+                thermal_exponential=thermal_exponential,
+                source_fn=source_fn,
+                symmetric_drive=symmetric_drive,
+                thermal_strang=thermal_strang,
+            ),
+            in_axes=_PER_TRAJ_IN_AXES,
+        ),
+        static_argnums=_PER_TRAJ_STATIC_ARGNUMS,
+    )
+
+
 def solve_lle_ssfm_jax(
     pin: float,
     delta_omega: float | np.ndarray | jnp.ndarray,
@@ -1243,6 +1374,9 @@ def solve_lle_ssfm_jax(
     fsr_delta_d1_override: np.ndarray | jnp.ndarray | None = None,
     mode_probe_indices: tuple[int, ...] | list[int] | None = None,
     noise_config: NoiseConfig | None = None,
+    source_fn: Callable[[jnp.ndarray], jnp.ndarray] | None = None,
+    symmetric_drive: bool = False,
+    thermal_coupling: str = "lagged",
     provenance: bool = False,
 ) -> dict[str, np.ndarray]:
     """Batch-capable SSFM solver for the generalized LLE using JAX.
@@ -1463,6 +1597,29 @@ def solve_lle_ssfm_jax(
             the thermal update from capping the global order of the otherwise
             second-order Strang-split field steps at 1. Selected as a static
             Python flag, so ``"euler"`` traces the historical graph verbatim.
+        source_fn: Optional manufactured-solution forcing S(tau, t) for the
+            method-of-manufactured-solutions study (``validation/mms.py``). A
+            jax-traceable callable taking the scalar sub-step time t [s] and
+            returning an (n_tau,) complex array; it is added as S(t)*dt_sub in
+            the same place and the same way as the pump kick. ``None`` (the
+            default) traces the legacy path with zero extra ops. Pass a stable
+            callable object — it is part of the jit cache key.
+        symmetric_drive: If True, split the drive kick into two half kicks
+            straddling the Strang core, making the sub-step palindromic and
+            the scheme SECOND order. ``False`` (the default) is the legacy
+            single full-dt kick before L·N·L, which is first order overall.
+            See the "order of accuracy" section of
+            :func:`_single_trajectory_solver`. Changes every trajectory when
+            enabled, hence opt-in.
+        thermal_coupling: ``"lagged"`` (the default, and what every committed
+            golden trajectory was produced with) uses ΔT from the start of the
+            step in the field update and P_abs from the end of it in the
+            thermal update — an explicit, first-order coupling that caps the
+            coupled system at order 1 even with
+            ``thermal_integrator="exponential"``. ``"strang"`` splits the ΔT
+            update into two half steps sandwiching the field update; combined
+            with the exponential integrator and ``symmetric_drive`` this
+            reaches order 2.
         provenance: If True, attach a ``"provenance"`` entry to the returned
             dict recording HOW this run was produced (see
             :mod:`simulator.provenance`): calling script, git commit, hashes of
@@ -1700,7 +1857,21 @@ def solve_lle_ssfm_jax(
     # "exponential" selects the exact update of _thermal_step. Resolved to a
     # STATIC Python bool here, never traced.
     thermal_exponential = resolved_noise.thermal_integrator == "exponential"
-    _per_traj = _PER_TRAJ_THERMAL_EXP if thermal_exponential else _PER_TRAJ
+    # Order-of-accuracy options (validation/convergence.py). All-default routes
+    # to the module-level objects so the legacy path keeps its identity and its
+    # compilation cache; any non-default combination gets its own cached jit.
+    if thermal_coupling not in ("lagged", "strang"):
+        raise ValueError(
+            f"thermal_coupling must be 'lagged' or 'strang', got {thermal_coupling!r}."
+        )
+    thermal_strang = thermal_coupling == "strang"
+    symmetric_drive = bool(symmetric_drive)
+    if source_fn is None and not symmetric_drive and not thermal_strang:
+        _per_traj = _PER_TRAJ_THERMAL_EXP if thermal_exponential else _PER_TRAJ
+    else:
+        _per_traj = _per_traj_variant(
+            thermal_exponential, source_fn, symmetric_drive, thermal_strang
+        )
 
     qn_enabled = resolved_noise.quantum_vacuum
     qn_seed_vacuum = resolved_noise.quantum_seed_vacuum_init
