@@ -114,6 +114,102 @@ from analysis.spectral_metrics import (  # noqa: E402
 #: conventional detection bar; see the W1 docstring for why the gate is a
 #: significance test rather than a comparison against the pedestal itself.
 RESOLVE_SIGMA = 3.0
+
+#: Clustering tripwire thresholds. A per-seed sample is called CLUSTERED only
+#: when ALL of these hold at its largest internal gap: the gap is at least
+#: CLUSTER_GAP_RATIO times the pooled within-cluster spread, it spans at least
+#: CLUSTER_GAP_RANGE_FRAC of the sample's total range, both sides hold at least
+#: CLUSTER_MIN_MEMBERS points, and the sample has at least CLUSTER_MIN_N points.
+#:
+#: Calibrated by simulation rather than by taste. The gap-to-spread ratio alone
+#: false-positives on small samples (a 2-vs-6 split of 8 Gaussian draws can
+#: reach 5x), which is why the range fraction and the minimum cluster size are
+#: there. At these values, over 4000 trials each: 0/4000 false positives on
+#: Gaussian and uniform samples at n = 24, and <= 0.05% on exponential ones;
+#: below n = 12 the rate is not acceptable, hence CLUSTER_MIN_N.
+#:
+#: Sensitivity is deliberately blunt -- a planted 10-sigma split is caught ~61%
+#: of the time and a 20-sigma split always. This is a "do not quote the mean"
+#: tripwire for gross separation, not a mixture-model fit, and a warning that
+#: cried wolf would be worse than no warning at all.
+CLUSTER_GAP_RATIO = 5.0
+CLUSTER_GAP_RANGE_FRAC = 0.5
+CLUSTER_MIN_MEMBERS = 3
+CLUSTER_MIN_N = 12
+
+
+def _distribution_diagnostic(values, label="value"):
+    """Summarise a small per-seed sample, and detect CLUSTERING.
+
+    ``mean +- std`` is only a faithful summary of a unimodal sample. When the
+    per-seed values split into separated clusters, the mean lands in the gap
+    BETWEEN them -- a number no realization produced -- and the std measures the
+    cluster separation rather than any run-to-run uncertainty. Quoting such a
+    mean as "X broadened to <mean> +- <std>" is wrong in a way that looks
+    perfectly normal in a report, so this runs on every per-seed sample and says
+    so explicitly.
+
+    Detection is a single-linkage split at the largest gap in the sorted sample,
+    accepted only when every threshold above is met (see the CLUSTER_* constants
+    for their simulated false-positive rates).
+
+    Returns a JSON-ready dict: mean/std/median/IQR/min/max, the cluster split
+    when one is found, and ``closest_seed_to_mean_abs`` -- the distance from the
+    mean to the NEAREST actual sample, which is the number that makes a
+    misleading mean obvious at a glance.
+    """
+    v = np.sort(np.asarray(values, dtype=np.float64).ravel())
+    n = v.size
+    out = {
+        "n": int(n),
+        "mean": float(np.mean(v)) if n else float("nan"),
+        "std": float(np.std(v, ddof=1)) if n > 1 else 0.0,
+        "median": float(np.median(v)) if n else float("nan"),
+        "iqr": float(np.subtract(*np.percentile(v, [75, 25]))) if n else float("nan"),
+        "min": float(v[0]) if n else float("nan"),
+        "max": float(v[-1]) if n else float("nan"),
+        "clustered": False,
+        "cluster_gap": 0.0,
+        "cluster_gap_over_within_std": 0.0,
+        "cluster_gap_over_range": 0.0,
+        "clusters": None,
+        "closest_seed_to_mean_abs": float("nan"),
+    }
+    if n == 0:
+        return out
+    out["closest_seed_to_mean_abs"] = float(np.min(np.abs(v - out["mean"])))
+    if n < CLUSTER_MIN_N:
+        return out
+
+    gaps = np.diff(v)
+    i = int(np.argmax(gaps))
+    lo, hi = v[: i + 1], v[i + 1:]
+    if lo.size < CLUSTER_MIN_MEMBERS or hi.size < CLUSTER_MIN_MEMBERS:
+        return out
+    # Pooled within-cluster std; guarded so an exactly-degenerate cluster cannot
+    # divide by zero and declare infinite separation.
+    within = math.sqrt(
+        ((lo.size - 1) * np.var(lo, ddof=1) + (hi.size - 1) * np.var(hi, ddof=1))
+        / max(lo.size + hi.size - 2, 1)
+    )
+    ratio = float(gaps[i] / within) if within > 0 else float("inf")
+    total_range = float(v[-1] - v[0])
+    range_frac = float(gaps[i] / total_range) if total_range > 0 else 0.0
+    out["cluster_gap"] = float(gaps[i])
+    out["cluster_gap_over_within_std"] = ratio
+    out["cluster_gap_over_range"] = range_frac
+    if ratio >= CLUSTER_GAP_RATIO and range_frac >= CLUSTER_GAP_RANGE_FRAC:
+        out["clustered"] = True
+        out["clusters"] = [
+            {"n": int(lo.size), "fraction": float(lo.size / n),
+             "mean": float(np.mean(lo)), "std": float(np.std(lo, ddof=1)),
+             "min": float(lo.min()), "max": float(lo.max())},
+            {"n": int(hi.size), "fraction": float(hi.size / n),
+             "mean": float(np.mean(hi)), "std": float(np.std(hi, ddof=1)),
+             "min": float(hi.min()), "max": float(hi.max())},
+        ]
+    out["label"] = str(label)
+    return out
 from simulator.lle_solver import _load_config, hbar_omega0_from_config, resolve_cavity_rates  # noqa: E402
 from simulator.noise_models import TRNoise  # noqa: E402
 
@@ -270,6 +366,33 @@ def _record(cav, dw, n_tau, cfgp, e0, dt0, settle_rt, record_rt, seed,
 # ---------------------------------------------------------------------------
 # Workstream 1 -- DW-peak survival under the full noise stack (flagship)
 # ---------------------------------------------------------------------------
+def _format_cluster_warning(dist, unit=""):
+    """Gate lines warning that a per-seed sample is clustered; [] when it is not.
+
+    Separated from the gate print so the wording and every format field are
+    exercised by tests. This branch only fires on a real clustered ensemble, so
+    without a test its first execution would be in the middle of a production
+    run -- precisely when a KeyError in a warning path is least welcome.
+    """
+    if not dist.get("clustered"):
+        return []
+    lo, hi = dist["clusters"]
+    u = f" {unit}" if unit else ""
+    return [
+        f"\n  *** {dist.get('label', 'value')}: PER-SEED DISTRIBUTION IS "
+        f"CLUSTERED -- DO NOT QUOTE mean +/- std ***",
+        f"      {lo['n']}/{dist['n']} seeds at {lo['mean']:.4g} +/- {lo['std']:.2g}{u}"
+        f"   |   {hi['n']}/{dist['n']} seeds at {hi['mean']:.4g} +/- {hi['std']:.2g}{u}",
+        f"      gap {dist['cluster_gap']:.4g}{u} = "
+        f"{dist['cluster_gap_over_within_std']:.0f}x the within-cluster spread "
+        f"and {dist['cluster_gap_over_range']:.0%} of the whole range;",
+        f"      the reported mean {dist['mean']:.6g}{u} lies inside that gap, "
+        f"{dist['closest_seed_to_mean_abs']:.4g}{u} from the nearest actual seed.",
+        f"      Quote the median ({dist['median']:.6g}{u}) or report the two "
+        f"clusters separately.",
+    ]
+
+
 def workstream1(out_dir, seeds, quick, numerics=PRODUCTION_NUMERICS):
     """Ensemble full-stack ON vs deterministic OFF at OPERATING_DW_KAPPA.
 
@@ -334,7 +457,7 @@ def workstream1(out_dir, seeds, quick, numerics=PRODUCTION_NUMERICS):
     # --- full-stack ON ensemble ---
     ens_spec = np.empty((seeds, n_tau))
     ens_u = []                           # per-seed intracavity-energy series (for W4/W5)
-    spans, combs = [], []
+    spans, combs, span_windows = [], [], []
     mu = np.arange(n_tau) - n_tau // 2
     pump_bin = n_tau // 2
     for s in range(seeds):
@@ -346,6 +469,11 @@ def workstream1(out_dir, seeds, quick, numerics=PRODUCTION_NUMERICS):
         ens_u.append(np.asarray(sol["U_int_history"])[0])
         span = three_db_span(mu, sp, {"fsr_hz": fsr_hz})
         spans.append(span["span_ghz"])
+        # The auto-selected median window, per seed. Kept because it is the
+        # first thing to check if the per-seed spans turn out to be clustered:
+        # a window that jumps between seeds points at the metric, one that does
+        # not points at the spectra.
+        span_windows.append(int(span["params"]["smooth_modes_used"]))
         combs.append(intracavity_comb_fraction(mu, sp))
         print(f"[W1] ON seed {s + 1}/{seeds}  span={span['span_ghz']:.2f} GHz "
               f"comb_frac={combs[-1]:.4f}  ({time.time() - t0:.1f}s)")
@@ -548,6 +676,10 @@ def workstream1(out_dir, seeds, quick, numerics=PRODUCTION_NUMERICS):
     span_std = float(np.std(spans, ddof=1)) if len(spans) > 1 else 0.0
     comb_mean = float(np.mean(combs)) if combs else float("nan")
     comb_std = float(np.std(combs, ddof=1)) if len(combs) > 1 else 0.0
+    # Per-seed distributions, and whether "mean +- std" is a faithful summary of
+    # them at all. See _distribution_diagnostic.
+    span_dist = _distribution_diagnostic(spans, "three_db_span_ghz_on")
+    comb_dist = _distribution_diagnostic(combs, "comb_fraction_on")
 
     # ---- figures ----
     apply_pub_style()
@@ -670,6 +802,13 @@ def workstream1(out_dir, seeds, quick, numerics=PRODUCTION_NUMERICS):
         "three_db_span_ghz_on_std": span_std,
         "three_db_span_ghz_on_normal_ordered": float(span_on_norm),
         "three_db_span_ghz_on_symmetric_ensemble_mean": float(span_on_sym_ens),
+        # Per-seed samples, persisted. They were previously reduced to mean+std
+        # and discarded, which is exactly how a clustered distribution hides.
+        "three_db_span_ghz_on_per_seed": [float(s) for s in spans],
+        "three_db_span_smooth_modes_per_seed": [int(w) for w in span_windows],
+        "comb_fraction_on_per_seed": [float(c) for c in combs],
+        "three_db_span_on_distribution": span_dist,
+        "comb_fraction_on_distribution": comb_dist,
         "comb_fraction_off": float(intracavity_comb_fraction(mu, spec_off)),
         "comb_fraction_on_mean": comb_mean,
         "comb_fraction_on_std": comb_std,
@@ -730,6 +869,9 @@ def workstream1(out_dir, seeds, quick, numerics=PRODUCTION_NUMERICS):
           f"(symmetric) -> {span_on_norm:.2f} (normally ordered)")
     print(f"    estimator effect {span_on_sym_ens - span_mean:+.2f} GHz, "
           f"ordering effect {span_on_norm - span_on_sym_ens:+.2f} GHz")
+    for dist, unit in ((span_dist, "GHz"), (comb_dist, "")):
+        for line in _format_cluster_warning(dist, unit):
+            print(line)
     print(f"  3 dB span  : OFF {block['three_db_span_ghz_off']:.2f} GHz | "
           f"ON {span_mean:.2f} +/- {span_std:.2f} GHz")
     print(f"  comb frac  : OFF {block['comb_fraction_off']:.4f} | "
@@ -761,6 +903,20 @@ def workstream1(out_dir, seeds, quick, numerics=PRODUCTION_NUMERICS):
             f"budget_ok={budget_ok}. The change is NOT explained by the vacuum "
             f"floor + pump jitter; the noise path may be perturbing the dispersion "
             f"operator or seeding. Diagnostic dump written; investigate.")
+
+    # Clustered per-seed spans cannot be diagnosed from the report alone -- it
+    # needs the individual spectra, which are otherwise reduced to mean/std and
+    # thrown away. Persist them (and the per-seed windows) ONLY when the tripwire
+    # fires, so the cost is paid exactly when someone will need the data.
+    if span_dist.get("clustered") or comb_dist.get("clustered"):
+        dump = out_dir / "span_bimodality_diagnostic.npz"
+        np.savez_compressed(
+            dump, mu=mu, ens_spec=ens_spec, spec_off=spec_off,
+            spans_ghz=np.asarray(spans), smooth_modes=np.asarray(span_windows),
+            comb_fractions=np.asarray(combs), p_pump_on=p_pump_on,
+            p_pump_off=p_pump_off, hbar_omega0=hbar_omega0,
+        )
+        print(f"  [W1] per-seed spectra written for offline diagnosis -> {dump}")
 
     ens = {
         "n_tau": n_tau, "mu": mu, "mean_lin": mean_lin, "std_lin": std_lin,
