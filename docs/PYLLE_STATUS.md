@@ -79,6 +79,20 @@ refining our own side (`convergence_attribution` in the JSON). Sub-2% cross-code
 agreement is therefore not attainable there by either code, which is a fact
 about pyLLE as a reference, not about this repo's solver.
 
+## Provenance note on the committed artifacts
+
+`pylle_crosscheck.json` stamps `git_commit = b31cc0b`, the HEAD at the moment
+the run executed; `validation/pylle_crosscheck.py` was still uncommitted then,
+so that SHA dates the run rather than identifying the code. After the run I made
+two edits to the **figure-rendering code only** — zooming the waveform panel and
+centring each trace on its own peak (the two solitons sit ~2e-2 rad apart in
+theta, and every compared observable is translation-invariant) — plus one
+docstring wording fix, and regenerated the PNG from the saved `.npz` with the
+committed `make_figure`. **No numerical result, tolerance, or verdict was
+touched**: the JSON and the `.npz` fields are exactly as the run produced them.
+Re-running the committed script reproduces the numbers; only the run timestamp
+and this SHA will differ.
+
 ## Result of the run committed here
 
 Operating point: measured SiN dispersion, 6601 modes (mu = -3300..3300), soliton
