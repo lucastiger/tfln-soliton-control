@@ -1,0 +1,23 @@
+--- a/ComputeLLE.jl
++++ b/ComputeLLE.jl
+@@ -456,6 +456,20 @@
+         # -- Save the Data in the dict --
+         param = SaveStatus_CallBack(Int(it), Nt, S, u0, param)
+     end
++
++    # [soliton-control patch 0003-probe-final-step]
++    # The probe cadence  (it*num_probe/Nt > probe)  never fires on the final
++    # step: with Tscan = 5000 and num_probe = 200 the last probe is written at
++    # round trip 4976, so the returned field sits at delta_omega = 29.9328 kappa
++    # rather than the 30.0000 kappa the run was asked for. Any cross-code
++    # comparison then compares two different detunings. The intermediate probe
++    # cadence is deliberately left untouched; only the LAST slot is overwritten
++    # with the true end-of-run state.
++    S["u_probe"][num_probe, :] = u0[:, 1]
++    S["detuning"][num_probe] = δω_all[ind_sweep[1]][Int(Nt)]
++    S["t_sim"][num_probe] = t_sim[Int(Nt)]
++    S["driving_force"][num_probe, :] = Fdrive(Int(Nt))
++
+     SaveData(S, num_probe, ω0, dω)
+ 
+ end

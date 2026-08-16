@@ -1,0 +1,64 @@
+--- a/ComputeLLE.jl
++++ b/ComputeLLE.jl
+@@ -257,6 +257,14 @@
+     write(logfile,string(Int(round(100))) * "\n")
+     close(logfile)
+ 
++    # [patch 0002] mean / max / call-count / maxiter-exhausted-count. Written as
++    # an extra key; RetrieveData reads only its own fixed key list, so adding
++    # one cannot break it.
++    S["picard_stats"] = [picard_iter_total / max(picard_calls, 1),
++                         Float64(picard_iter_max),
++                         Float64(picard_calls),
++                         Float64(picard_fail_count)]
++
+     SaveResultsToFile(tmp_dir, S)
+ end
+ 
+@@ -284,8 +292,19 @@
+ end
+ 
+ 
+-tol = 1e-2
+-maxiter = 10
++# [soliton-control patch 0002-restore-tol-maxiter-cli]
++# Upstream unconditionally clobbered the CLI values parsed at :46-47 with
++#     tol = 1e-2
++#     maxiter = 10
++# which made the command-line tolerance dead. Those two assignments are deleted
++# so the ARGS values survive; :46-47 are untouched. The counters below make the
++# Picard iteration observable, which is the whole point of restoring the knob:
++# at tol = 1e-2 the loop exits on a change-per-round-trip test, not on local
++# truncation error, and the mean iteration count reveals that.
++picard_iter_total = 0
++picard_iter_max = 0
++picard_calls = 0
++picard_fail_count = 0
+ success = false
+ 
+ 
+@@ -364,7 +383,9 @@
+     
+     # --- iterative procedur to find ^LN^(t + δt, ω) ---
+     success = false;
++    iters_used = 0;                       # [patch 0002] Picard iteration counter
+     for ii in collect(1:maxiter)
++        iters_used = ii                   # [patch 0002]
+         err = 0.0
+         success = false
+         NL½prop_1 .= NL(A½prop, it);
+@@ -382,6 +403,14 @@
+         end
+     end
+ 
++    # [patch 0002] accumulate iteration statistics for the output file
++    global picard_iter_total += iters_used
++    global picard_iter_max = iters_used > picard_iter_max ? iters_used : picard_iter_max
++    global picard_calls += 1
++    if !success
++        global picard_fail_count += 1
++    end
++
+     if success
+         u0 = Aprop
+         return u0
