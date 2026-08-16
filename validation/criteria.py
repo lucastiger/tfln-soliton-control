@@ -450,14 +450,24 @@ def derive_tolerances(ours_path: Path | str | None = None,
         # which is the opposite of a safety cap. R4 defines G5 as
         # max(floor, K*sqrt(U_o^2+U_p^2)) with no ceiling, and that is what is
         # applied here.
-        tol = max(raw, floor) if absolute else min(max(raw, floor), MAX_TOL)
+        if absolute:
+            tol = max(raw, floor)
+            # State the mode-converted uncertainties explicitly: the entry's
+            # u_ours/u_pylle fields stay RELATIVE (that is what the studies
+            # measured), so quoting them here without the conversion would not
+            # reproduce `raw`.
+            why = (f"max({COVERAGE_FACTOR}*sqrt(U_o^2+U_p^2)={raw:.6g} modes "
+                   f"[U_o={u_o_abs:.6g}, U_p={u_p_abs:.6g} modes], "
+                   f"floor={floor:g}); no relative ceiling applied to an "
+                   f"absolute tolerance")
+        else:
+            tol = min(max(raw, floor), MAX_TOL)
+            why = (f"clip({COVERAGE_FACTOR}*sqrt(U_o^2+U_p^2)={raw:.6g}, "
+                   f"floor={floor:g}, hi={MAX_TOL:g})")
         entries[cid] = DerivedTolerance(
             cid, c.name, float(tol), "DERIVED",
             "absolute" if absolute else "relative",
-            u_o, u_p, COVERAGE_FACTOR, floor,
-            f"clip({COVERAGE_FACTOR}*sqrt(U_o^2+U_p^2)={raw:.6g}, "
-            f"floor={floor:g}, hi={MAX_TOL:g})",
-            src_o, src_p)
+            u_o, u_p, COVERAGE_FACTOR, floor, why, src_o, src_p)
 
     fp = _fingerprint(entries)
     prov = {
