@@ -1,3 +1,5 @@
+SUPERSEDED by docs/PYLLE_STATUS_V2.md - retained as the historical record of the v1 run
+
 # pyLLE cross-check: OPERATIONAL
 
 Status as of 2026-08-16. Supersedes an earlier revision of this file that

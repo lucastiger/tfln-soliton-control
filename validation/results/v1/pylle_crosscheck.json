@@ -1,0 +1,352 @@
+{
+  "git_commit": "b31cc0b4b611266fd6d617fd39c457bdc709a002",
+  "timestamp_utc": "2026-08-16T01:42:42.721271+00:00",
+  "hostname": "vm",
+  "platform": "Linux-6.18.5-fc-v20-x86_64-with-glibc2.39",
+  "versions": {
+    "ours": {
+      "python": "3.11.15",
+      "numpy": "2.4.6",
+      "jax": "0.10.2"
+    },
+    "pylle_env": {
+      "pyLLE": "4.1.2",
+      "python": "3.11.15",
+      "numpy": "1.26.4",
+      "scipy": "1.17.1"
+    },
+    "julia": "julia version 1.10.4"
+  },
+  "physical_parameters": {
+    "fsr_hz": 24600000000.0,
+    "pump_wavelength_m": 1.55e-06,
+    "pin_w": 0.214,
+    "kappa_i_rad_per_s": 30380000.0,
+    "kappa_c_rad_per_s": 121500000.0,
+    "n0": 1.87,
+    "n2_m2_per_w": 2.4e-19,
+    "effective_mode_area_m2": 3.344e-12,
+    "gamma_LLE_per_J_per_s": 1.029e+18
+  },
+  "translation": {
+    "f_pmp_hz": 193589348987759.0,
+    "omega0_rad_per_s": 1216357753186348.8,
+    "pump_wavelength_m_nominal": 1.55e-06,
+    "t_r_s": 4.089705051744962e-11,
+    "Pin_w": 0.214,
+    "Qi": 40038109.05814183,
+    "Qc": 10011174.923344433,
+    "gamma_nlse_per_w_per_m": 0.2909331057499423,
+    "n_g": 2.0851321203150524,
+    "L_cav_m": 0.005844562637456039,
+    "R_m": 0.0009301910339613336,
+    "D1_manual_rad_per_s": 153634191896.0324,
+    "phi_pmp_rad": -1.5707963267948966,
+    "n0": 1.87,
+    "n2_m2_per_w": 2.4e-19,
+    "Aeff_m2": 3.344e-12
+  },
+  "translation_round_trip": {
+    "fsr_hz": {
+      "ours": 24600000000.0,
+      "round_trip": 24600000000.0,
+      "rel_diff": 0.0
+    },
+    "pump_wavelength_m": {
+      "ours": 1.55e-06,
+      "round_trip": 1.55e-06,
+      "rel_diff": 0.0
+    },
+    "pin_w": {
+      "ours": 0.214,
+      "round_trip": 0.214,
+      "rel_diff": 0.0
+    },
+    "kappa_i_rad_per_s": {
+      "ours": 30380000.0,
+      "round_trip": 30380000.0,
+      "rel_diff": 0.0
+    },
+    "kappa_c_rad_per_s": {
+      "ours": 121500000.0,
+      "round_trip": 121500000.00000001,
+      "rel_diff": 1.226433020069766e-16
+    },
+    "n0": {
+      "ours": 1.87,
+      "round_trip": 1.87,
+      "rel_diff": 0.0
+    },
+    "n2_m2_per_w": {
+      "ours": 2.4e-19,
+      "round_trip": 2.4e-19,
+      "rel_diff": 0.0
+    },
+    "effective_mode_area_m2": {
+      "ours": 3.344e-12,
+      "round_trip": 3.344e-12,
+      "rel_diff": 0.0
+    },
+    "gamma_LLE_per_J_per_s": {
+      "ours": 1.029e+18,
+      "round_trip": 1.029e+18,
+      "rel_diff": 0.0
+    },
+    "_worst_rel_diff": 1.226433020069766e-16
+  },
+  "conventions": {
+    "d_int_units": "rad/s on both sides (Finding 1)",
+    "field_map": "E_ours = conj(A_pyLLE)*sqrt(t_r)  (Findings 2,3)",
+    "detuning_map": "delta_omega_pylle = -delta_omega_ours  (Finding 2)",
+    "mode_index_map": "conjugation mirrors mu -> -mu; applied via the field map",
+    "drive_phase": "phi_pmp = -pi/2 makes pyLLE's drive real positive (Finding 4)",
+    "dispersion_source": "pyLLE's own refit D_int fed to BOTH codes (Finding 7)",
+    "dispersion_mirror_applied": true,
+    "dispersion_mirror_reason": "D_int_pyLLE(mu) = D_int_ours(-mu), forced by the conjugate field map (Finding 2b)",
+    "dispersion_refit_max_rel_diff_vs_our_loader": 2.3217715595696414e-12,
+    "pump_reference": "sim['f_pmp'] pinned to the CSV mu=0 resonance (Finding 8)",
+    "pump_offset_from_nominal_fsr": 7.108128272395834,
+    "f_pmp_hz_used": 193589348987759.0,
+    "f_pmp_hz_nominal_c_over_lambda": 193414489032258.06
+  },
+  "frame_and_timebase": {
+    "note": "Finding 9: pyLLE hardwires t_r = 2*pi/D1, so one D1 serves both the co-moving frame and the timebase.",
+    "D1_rad_per_s": 153634191896.0324,
+    "fsr_hz_used": 24451641068.182365,
+    "fsr_hz_config_leaf": 24600000000.0,
+    "fsr_rel_diff": 0.006030850886895715,
+    "t_r_s": 4.089705051744962e-11,
+    "kappa_t_r": 0.006211444032590249
+  },
+  "discretization": {
+    "n_modes": 6601,
+    "mu_min": -3300,
+    "mu_max": 3300,
+    "n_roundtrips_main": 5000,
+    "n_roundtrips_scan": 2000,
+    "n_substeps": 1,
+    "fine_cadence_M": 1,
+    "step_note": "one step per round trip on both sides (pyLLE dt=1 is hardwired)",
+    "max_abs_Dint_t_r_rad": 3.303004113335108
+  },
+  "initialization": {
+    "seed": "deterministic sech DKS ansatz on the lower CW branch",
+    "seed_amplitude_J": "A^2 = 2*delta_omega/gamma_LLE",
+    "seed_width_theta": "w = sqrt(D2/(2*delta_omega))",
+    "local_D2_rad_per_s2": 50011.53497093499,
+    "randomness": "none on either side (Finding 5)",
+    "noise": "NoiseConfig.all_off() + dn_dT_per_k=0; pyLLE 4.1.2 Noise() is commented out at its call site"
+  },
+  "detuning": {
+    "ramp_start_over_kappa": 16.0,
+    "ramp_end_over_kappa": 30.0,
+    "kappa_rad_per_s": 151880000.0,
+    "final_delta_omega_ours_rad_per_s": 4556400000.0,
+    "final_delta_omega_pylle_rad_per_s": -4556400000.0,
+    "scan_over_kappa": [
+      3.0,
+      5.0,
+      8.0,
+      16.0,
+      30.0,
+      40.0,
+      50.0
+    ],
+    "survival_ours": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false
+    ],
+    "survival_pylle": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false
+    ],
+    "edge_refinement": {
+      "ours_lower_bracket_over_kappa": [
+        5.75,
+        5.9375
+      ],
+      "ours_upper_bracket_over_kappa": [
+        37.5,
+        38.125
+      ],
+      "pylle_lower_bracket_over_kappa": [
+        6.125,
+        6.3125
+      ],
+      "pylle_upper_bracket_over_kappa": [
+        36.875,
+        37.5
+      ],
+      "bisect_iters": 4
+    }
+  },
+  "observables": {
+    "ours": {
+      "dw_peak_mu_red": -3075,
+      "dw_peak_mu_blue": null,
+      "dw_argmax_mu_red": -3075,
+      "dw_argmax_mu_blue": null,
+      "dw_centroid_red": -3074.550617967902,
+      "dw_centroid_blue": null,
+      "dw_peak_dbc_red": -53.94950151640407,
+      "dw_peak_dbc_blue": null,
+      "spectral_span_3db_modes": 443,
+      "soliton_peak_power_w": 230.11009266858082,
+      "comb_line_count_60dbc": 3293
+    },
+    "pylle": {
+      "dw_peak_mu_red": -3074,
+      "dw_peak_mu_blue": null,
+      "dw_argmax_mu_red": -3074,
+      "dw_argmax_mu_blue": null,
+      "dw_centroid_red": -3073.9038083401206,
+      "dw_centroid_blue": null,
+      "dw_peak_dbc_red": -48.49265398360722,
+      "dw_peak_dbc_blue": null,
+      "spectral_span_3db_modes": 444,
+      "soliton_peak_power_w": 240.2810356884088,
+      "comb_line_count_60dbc": 3612
+    }
+  },
+  "convergence_attribution": {
+    "note": "pyLLE cannot be refined: dt=1 round trip is hardwired (ComputeLLE.jl:123) and its nonlinear-iteration tolerance is fixed at 1e-2 (:278). Refinement is on our side only.",
+    "pylle_refinable": false,
+    "levels": {
+      "2": {
+        "soliton_peak_power_w": 233.93558698981394,
+        "comb_line_count_60dbc": 3357,
+        "spectral_span_3db_modes": 445,
+        "dw_peak_mu_red": -3074,
+        "rel_drift_peak_power_vs_nsub1": 0.016352767744565913,
+        "rel_drift_line_count_vs_nsub1": 0.019064641048555257
+      },
+      "4": {
+        "soliton_peak_power_w": 230.6146452514656,
+        "comb_line_count_60dbc": 3342,
+        "spectral_span_3db_modes": 445,
+        "dw_peak_mu_red": -3074,
+        "rel_drift_peak_power_vs_nsub1": 0.0021878601089475413,
+        "rel_drift_line_count_vs_nsub1": 0.014661879114302813
+      }
+    }
+  },
+  "secondary_converged_regime": {
+    "delta_omega_over_kappa": 8.0,
+    "kerr_phase_per_roundtrip_rad": 0.09938310452144399,
+    "note": "same observables at a detuning where dt = 1 round trip is accurate; DWs are not excited here, so the DW indices are expected to be absent rather than matching",
+    "ours": {
+      "dw_peak_mu_red": -3067,
+      "dw_peak_mu_blue": 3216,
+      "dw_argmax_mu_red": -3068,
+      "dw_argmax_mu_blue": 3073,
+      "dw_centroid_red": -3066.707335521452,
+      "dw_centroid_blue": 3215.866363654573,
+      "dw_peak_dbc_red": -102.3673635297832,
+      "dw_peak_dbc_blue": -158.03138703537635,
+      "spectral_span_3db_modes": 64,
+      "soliton_peak_power_w": 39.14717754711808,
+      "comb_line_count_60dbc": 910
+    },
+    "pylle": {
+      "dw_peak_mu_red": -3071,
+      "dw_peak_mu_blue": 3223,
+      "dw_argmax_mu_red": -3073,
+      "dw_argmax_mu_blue": 3081,
+      "dw_centroid_red": -3071.4976299316286,
+      "dw_centroid_blue": 3223.477847867844,
+      "dw_peak_dbc_red": -92.4883717021047,
+      "dw_peak_dbc_blue": -153.79003199910142,
+      "spectral_span_3db_modes": 66,
+      "soliton_peak_power_w": 38.110911097095766,
+      "comb_line_count_60dbc": 907
+    },
+    "rel_diff": {
+      "soliton_peak_power_w": 0.02647103865342662,
+      "comb_line_count_60dbc": 0.0032967032967032967,
+      "spectral_span_3db_modes": 0.030303030303030304
+    }
+  },
+  "checks": [
+    {
+      "observable": "dw_peak_mode_index_red",
+      "ours": -3075,
+      "pylle": -3074,
+      "abs_diff": 1,
+      "rel_diff": 1.0,
+      "tolerance": 0.0,
+      "verdict": "FAIL"
+    },
+    {
+      "observable": "dw_peak_mode_index_blue",
+      "ours": null,
+      "pylle": null,
+      "abs_diff": null,
+      "rel_diff": null,
+      "tolerance": 0.0,
+      "verdict": "NOT_MEASURED"
+    },
+    {
+      "observable": "spectral_span_3db_modes",
+      "ours": 443,
+      "pylle": 444,
+      "abs_diff": 1.0,
+      "rel_diff": 0.0022522522522522522,
+      "tolerance": 0.02,
+      "verdict": "PASS"
+    },
+    {
+      "observable": "soliton_peak_power_w",
+      "ours": 230.11009266858082,
+      "pylle": 240.2810356884088,
+      "abs_diff": 10.170943019827973,
+      "rel_diff": 0.0423293623264444,
+      "tolerance": 0.02,
+      "verdict": "FAIL"
+    },
+    {
+      "observable": "existence_edge_lower_dw_over_kappa",
+      "ours": 5.9375,
+      "pylle": 6.3125,
+      "abs_diff": 0.375,
+      "rel_diff": 0.0594059405940594,
+      "tolerance": 0.05,
+      "verdict": "FAIL"
+    },
+    {
+      "observable": "existence_edge_upper_dw_over_kappa",
+      "ours": 37.5,
+      "pylle": 36.875,
+      "abs_diff": 0.625,
+      "rel_diff": 0.016666666666666666,
+      "tolerance": 0.05,
+      "verdict": "PASS"
+    },
+    {
+      "observable": "comb_line_count_60dbc",
+      "ours": 3293,
+      "pylle": 3612,
+      "abs_diff": 319.0,
+      "rel_diff": 0.08831672203765227,
+      "tolerance": 0.02,
+      "verdict": "FAIL"
+    }
+  ],
+  "tolerances": {
+    "dw_peak_mode_indices": 0.0,
+    "spectral_span_3db": 0.02,
+    "soliton_peak_power": 0.02,
+    "existence_range_edges": 0.05,
+    "comb_line_count_60dbc": 0.02
+  },
+  "overall": "FAIL"
+}
