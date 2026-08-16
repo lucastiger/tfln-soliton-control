@@ -42,6 +42,17 @@ convergence_lle
     It also redefines the ill-conditioned observables (band-limited peak, sub-bin
     3 dB span, fixed-band DW centroid) and records the conditioning of the ones
     that stay diagnostic-only (the -60 dBc line count).
+criteria
+    Acceptance criteria for the cross-code comparison, v2. Every criterion is
+    classified HARD (must hold for any correct solver, independent of the other
+    code), GATED (a cross-code agreement claim, and therefore only meaningful to
+    the precision both codes actually resolve) or DIAGNOSTIC (reported, never
+    decisive). GATED tolerances are *derived* from the measured uncertainty bands
+    in ``convergence_lle`` and in pyLLE's own refinement study, not chosen: a
+    criterion whose uncertainty could not be measured has no tolerance at all and
+    is demoted rather than given a guessed number. The derived mapping is
+    fingerprinted before any comparison value is read, so a tolerance cannot be
+    edited after seeing a result without the report failing to build.
 figures
     Standalone figure scripts for the modules above.
 
@@ -56,6 +67,7 @@ __all__ = [
     "analytic_cw",
     "convergence",
     "convergence_lle",
+    "criteria",
     "figures",
     "mms",
     "noise_off_identity",
