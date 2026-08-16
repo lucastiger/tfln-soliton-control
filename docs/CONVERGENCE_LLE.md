@@ -13,6 +13,13 @@ Reference for the physics: Herr, Tikan & Kippenberg, **arXiv:2604.05897v1**
 exactly, so the harness is demonstrably driving the same solver on the same
 problem as the committed cross-check.
 
+**Determinism (T3): PASSED.** The study was run twice end to end and the two
+JSONs were compared field by field: **zero numerical fields differ**. The only
+differences are per-level `wall_s` / `wall_clock_total_s`, `timestamp_utc`, the
+git SHA (a commit landed between the runs), the `mkdtemp` path of the derived
+config, and `argv` (the second run necessarily carries `--out-tag`). Every
+observable, order, limit and uncertainty is reproduced bitwise.
+
 ---
 
 ## 1. The operating point, and why it is the difficult one
