@@ -1,0 +1,20 @@
+--- a/ComputeLLE.jl
++++ b/ComputeLLE.jl
+@@ -120,7 +120,16 @@
+     global Ptot += Ppmp[ii]
+ end
+ # dt=0.2/(sqrt(Ptot))
+-dt = 1
++# [soliton-control patch 0001-restore-dt-cli]
++# Upstream pins the integration step at exactly one round trip. Every live use
++# of dt in this file (Nt = t_ramp/tR/dt, the drive kick *dt, the linear half
++# operator *dt/2, the trapezoidal nonlinear phase *dt/2) is already
++# dimensionally consistent with a step of length dt round trips, so the kernel
++# is refinable as written -- the constant is the only thing stopping it.
++# ARGS[1..4] are tmp_dir, tol, maxiter, step_factor (see :44-48); dt is
++# APPENDED as ARGS[5] so no existing argument is reordered. With the argument
++# absent the value is 1.0 and behaviour is bit-identical to upstream.
++dt = length(ARGS) >= 5 ? parse(Float64, ARGS[5]) : 1.0
+ t_end = t_end*tR
+ t_ramp = t_end
+ 

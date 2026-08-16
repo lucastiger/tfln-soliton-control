@@ -1,0 +1,619 @@
+{
+  "schema_version": "1.0",
+  "provenance": {
+    "git_commit": "96b92016a8f0f3023713595e570bf99bc51f4e40",
+    "git_dirty": false,
+    "git_branch": "claude/pylle-vendor-refinable",
+    "argv": [
+      "third_party/pylle/run_refinement.py",
+      "--pylle-python",
+      "/tmp/claude-0/-home-user-soliton-control/041f2966-b5bf-51d8-9b92-d64b410d65cf/scratchpad/pylle-env/bin/python",
+      "--julia-bin",
+      "/tmp/claude-0/-home-user-soliton-control/041f2966-b5bf-51d8-9b92-d64b410d65cf/scratchpad/pylle-env/bin/julia",
+      "--dts",
+      "1.0,0.5,0.25,0.125",
+      "--max-seconds",
+      "2400",
+      "--out-tag",
+      "dw30k"
+    ],
+    "vendor_integrity": {
+      "pylle_version": "4.1.2",
+      "upstream_sha256": "fc84520cff40909cfae4e68c5cc6fb0812b947d4070a73f520c854dd426d12fe",
+      "installed_sha256": null,
+      "vendored_sha256": "f400979c29ec158ed26edc27030b93e8c40b0cb4a1b8712917b1ff5c2eb599cf",
+      "patches": [
+        {
+          "name": "0001-restore-dt-cli.patch",
+          "sha256": "cd0a7a7920101ce143d084ba43bb1c0be98c838552707a9ff3bd113058b56eac"
+        },
+        {
+          "name": "0002-restore-tol-maxiter-cli.patch",
+          "sha256": "c619046b0f081b57866f47ab361a7571451df156f7060373d434e664d4ea3467"
+        },
+        {
+          "name": "0003-probe-final-step.patch",
+          "sha256": "7c6f9ae1ccc8c470dd67aaeef25f9092a65c3ab86f2cb78eb692fff30137dde4"
+        }
+      ]
+    },
+    "julia_depot_path": "/tmp/claude-0/-home-user-soliton-control/041f2966-b5bf-51d8-9b92-d64b410d65cf/scratchpad/juliadepot",
+    "julia_packages": {
+      "HDF5": "0.17.3",
+      "FFTW": "1.10.0"
+    },
+    "pylle_env_versions": {
+      "pyLLE": "4.1.2",
+      "python": "3.11.15",
+      "numpy": "1.26.4",
+      "scipy": "1.17.1"
+    },
+    "res_dict": {
+      "R": 0.0009301910339613336,
+      "Qi": 40038109.05814183,
+      "Qc": 10011174.923344433,
+      "gamma": 0.2909331057499423,
+      "dispfile": "/tmp/pylle_refine_e6mky031/dispfile_mirrored.csv"
+    },
+    "sim_template": {
+      "Pin_w": 0.214,
+      "f_pmp_hz": 193589348987759.0,
+      "phi_pmp_rad": -1.5707963267948966,
+      "D1_manual_rad_per_s": 153634191896.0324,
+      "mu_half": 3300,
+      "mu_fit": [
+        -3300,
+        3300
+      ],
+      "num_probe": 200,
+      "t_r_s": 4.089705051744962e-11
+    },
+    "dispfile_sha256": "85c4778dd1c7bed29d29bba8a0dfc8f14fd4c843498371c2eff1f97fbc209ee7",
+    "seed_sha256": "4a3c9805776a381a44d0ff90527ff04f97e5fdc00c1ee8edd3283c944c15c823",
+    "physical_parameters": {
+      "fsr_hz": 24600000000.0,
+      "pump_wavelength_m": 1.55e-06,
+      "pin_w": 0.214,
+      "kappa_i_rad_per_s": 30380000.0,
+      "kappa_c_rad_per_s": 121500000.0,
+      "n0": 1.87,
+      "n2_m2_per_w": 2.4e-19,
+      "effective_mode_area_m2": 3.344e-12,
+      "gamma_LLE_per_J_per_s": 1.029e+18
+    },
+    "fsr_hz_used": 24451641068.182365,
+    "d1_rad_per_s": 153634191896.0324,
+    "t_r_s": 4.089705051744962e-11,
+    "Tscan": 5000,
+    "dts": "1.0,0.5,0.25,0.125",
+    "tight_tol": 1e-08,
+    "tight_maxiter": 60,
+    "versions": {
+      "python": "3.11.15",
+      "numpy": "2.4.6",
+      "platform": "Linux-6.18.5-fc-v20-x86_64-with-glibc2.39",
+      "hostname": "vm"
+    },
+    "timestamp_utc": "2026-08-16T07:36:10.938508+00:00",
+    "wall_clock_total_s": 977.6929411888123
+  },
+  "upstream": {
+    "pylle_version": "4.1.2",
+    "julia_version": "julia version 1.10.4",
+    "computelle_sha256": "fc84520cff40909cfae4e68c5cc6fb0812b947d4070a73f520c854dd426d12fe"
+  },
+  "patches": [
+    {
+      "name": "0001-restore-dt-cli.patch",
+      "sha256": "cd0a7a7920101ce143d084ba43bb1c0be98c838552707a9ff3bd113058b56eac",
+      "lines_changed": 11,
+      "rationale": "dt was pinned at 1 round trip; every live use is already consistent with a step of dt round trips, so exposing it as ARGS[5] makes the kernel refinable without touching the scheme."
+    },
+    {
+      "name": "0002-restore-tol-maxiter-cli.patch",
+      "sha256": "c619046b0f081b57866f47ab361a7571451df156f7060373d434e664d4ea3467",
+      "lines_changed": 33,
+      "rationale": "lines 278-279 unconditionally clobbered the CLI tol/maxiter parsed at 46-47, making the knob dead; deleting them revives it. Picard counters added so the iteration count is observable."
+    },
+    {
+      "name": "0003-probe-final-step.patch",
+      "sha256": "7c6f9ae1ccc8c470dd67aaeef25f9092a65c3ab86f2cb78eb692fff30137dde4",
+      "lines_changed": 14,
+      "rationale": "the probe cadence never fires on the last step, so the returned field was at 29.9328 kappa instead of 30 kappa; the final slot is now overwritten with the true end-of-run state."
+    }
+  ],
+  "equivalence_gate": {
+    "skipped": false,
+    "rel_l2": 0.0,
+    "passed": true,
+    "tolerance": 1e-12,
+    "mu_half": 512,
+    "Tscan": 200,
+    "dt": 1.0,
+    "tol": 0.01,
+    "maxiter": 10,
+    "note": "vendored with 0001+0002 only (0003 reverted) vs pristine upstream",
+    "upstream_mean_picard": null,
+    "vendored_mean_picard": 2.0
+  },
+  "levels": [
+    {
+      "name": "dt1.0_loose",
+      "dt": 1.0,
+      "Nt": 5000,
+      "tol": 0.01,
+      "maxiter": 10,
+      "wall_s": 32.55913758277893,
+      "status": "OK",
+      "mean_picard_iters": 2.0,
+      "max_picard_iters": 2.0,
+      "picard_fail_count": 0.0,
+      "convergence_error_printed": false,
+      "detuning_pylle_final": -4556400000.0,
+      "observables": {
+        "P_peak_w": 239.9660009480438,
+        "P_peak_raw_w": 231.60956720769366,
+        "peak_subsample_offset": 0.375,
+        "S3_modes": 445.4403497036744,
+        "S3_int_modes": 444,
+        "S3_n_runs": 3,
+        "mu_DW": -3074.5562179725275,
+        "dw_power_dbc": -22.471170889658385,
+        "N60": 3528,
+        "dN60_ddB": 106,
+        "N60_core": 3001,
+        "N60_mid": 477,
+        "N60_edge": 50,
+        "U_mean_w": 0.19212418424131447,
+        "comb_frac": 0.8562305855746273
+      }
+    },
+    {
+      "name": "dt0.5_loose",
+      "dt": 0.5,
+      "Nt": 10000,
+      "tol": 0.01,
+      "maxiter": 10,
+      "wall_s": 54.04545211791992,
+      "status": "OK",
+      "mean_picard_iters": 2.0,
+      "max_picard_iters": 2.0,
+      "picard_fail_count": 0.0,
+      "convergence_error_printed": false,
+      "detuning_pylle_final": -4556400000.0,
+      "observables": {
+        "P_peak_w": 236.10695733744564,
+        "P_peak_raw_w": 224.9654956212671,
+        "peak_subsample_offset": 0.46875,
+        "S3_modes": 445.0780426211742,
+        "S3_int_modes": 444,
+        "S3_n_runs": 3,
+        "mu_DW": -3074.9413466424753,
+        "dw_power_dbc": -21.830769000822666,
+        "N60": 3346,
+        "dN60_ddB": 88,
+        "N60_core": 3001,
+        "N60_mid": 293,
+        "N60_edge": 52,
+        "U_mean_w": 0.19287087060707528,
+        "comb_frac": 0.8556847285905671
+      }
+    },
+    {
+      "name": "dt0.25_loose",
+      "dt": 0.25,
+      "Nt": 20000,
+      "tol": 0.01,
+      "maxiter": 10,
+      "wall_s": 103.23051142692566,
+      "status": "OK",
+      "mean_picard_iters": 2.0,
+      "max_picard_iters": 2.0,
+      "picard_fail_count": 0.0,
+      "convergence_error_printed": false,
+      "detuning_pylle_final": -4556400000.0,
+      "observables": {
+        "P_peak_w": 236.46063372823946,
+        "P_peak_raw_w": 233.50026295434796,
+        "peak_subsample_offset": 0.21875,
+        "S3_modes": 445.0590168424657,
+        "S3_int_modes": 445,
+        "S3_n_runs": 3,
+        "mu_DW": -3075.093320228138,
+        "dw_power_dbc": -22.03767694505093,
+        "N60": 3360,
+        "dN60_ddB": 96,
+        "N60_core": 3001,
+        "N60_mid": 267,
+        "N60_edge": 92,
+        "U_mean_w": 0.19310069669698213,
+        "comb_frac": 0.8552264770125086
+      }
+    },
+    {
+      "name": "dt0.125_loose",
+      "dt": 0.125,
+      "Nt": 40000,
+      "tol": 0.01,
+      "maxiter": 10,
+      "wall_s": 139.8712236881256,
+      "status": "OK",
+      "mean_picard_iters": 1.0,
+      "max_picard_iters": 1.0,
+      "picard_fail_count": 0.0,
+      "convergence_error_printed": false,
+      "detuning_pylle_final": -4556400000.0,
+      "observables": {
+        "P_peak_w": 235.9929252939844,
+        "P_peak_raw_w": 235.58967690944033,
+        "peak_subsample_offset": 0.09375,
+        "S3_modes": 445.1654104469118,
+        "S3_int_modes": 445,
+        "S3_n_runs": 3,
+        "mu_DW": -3074.2722165223604,
+        "dw_power_dbc": -25.162092374557886,
+        "N60": 3345,
+        "dN60_ddB": 97,
+        "N60_core": 3001,
+        "N60_mid": 252,
+        "N60_edge": 92,
+        "U_mean_w": 0.19317343526741307,
+        "comb_frac": 0.8549539984595301
+      }
+    },
+    {
+      "name": "dt1.0_tight",
+      "dt": 1.0,
+      "Nt": 5000,
+      "tol": 1e-08,
+      "maxiter": 60,
+      "wall_s": 84.28377485275269,
+      "status": "OK",
+      "mean_picard_iters": 8.7232,
+      "max_picard_iters": 10.0,
+      "picard_fail_count": 0.0,
+      "convergence_error_printed": false,
+      "detuning_pylle_final": -4556400000.0,
+      "observables": {
+        "P_peak_w": 240.1383848626209,
+        "P_peak_raw_w": 228.62953347748103,
+        "peak_subsample_offset": 0.4375,
+        "S3_modes": 445.31642293510436,
+        "S3_int_modes": 445,
+        "S3_n_runs": 3,
+        "mu_DW": -3074.6577159263975,
+        "dw_power_dbc": -20.05404204222387,
+        "N60": 3541,
+        "dN60_ddB": 104,
+        "N60_core": 3001,
+        "N60_mid": 478,
+        "N60_edge": 62,
+        "U_mean_w": 0.1921921164946048,
+        "comb_frac": 0.8562467864043387
+      }
+    },
+    {
+      "name": "dt0.5_tight",
+      "dt": 0.5,
+      "Nt": 10000,
+      "tol": 1e-08,
+      "maxiter": 60,
+      "wall_s": 105.3727011680603,
+      "status": "OK",
+      "mean_picard_iters": 5.4987,
+      "max_picard_iters": 6.0,
+      "picard_fail_count": 0.0,
+      "convergence_error_printed": false,
+      "detuning_pylle_final": -4556400000.0,
+      "observables": {
+        "P_peak_w": 237.44621935576305,
+        "P_peak_raw_w": 234.99138051173847,
+        "peak_subsample_offset": 0.21875,
+        "S3_modes": 445.1277683012472,
+        "S3_int_modes": 445,
+        "S3_n_runs": 3,
+        "mu_DW": -3075.045050363959,
+        "dw_power_dbc": -21.63167533872941,
+        "N60": 3409,
+        "dN60_ddB": 100,
+        "N60_core": 3001,
+        "N60_mid": 304,
+        "N60_edge": 104,
+        "U_mean_w": 0.1928612763843674,
+        "comb_frac": 0.8557089983711238
+      }
+    },
+    {
+      "name": "dt0.25_tight",
+      "dt": 0.25,
+      "Nt": 20000,
+      "tol": 1e-08,
+      "maxiter": 60,
+      "wall_s": 148.8496277332306,
+      "status": "OK",
+      "mean_picard_iters": 4.0,
+      "max_picard_iters": 4.0,
+      "picard_fail_count": 0.0,
+      "convergence_error_printed": false,
+      "detuning_pylle_final": -4556400000.0,
+      "observables": {
+        "P_peak_w": 235.43841307688334,
+        "P_peak_raw_w": 227.06787975857858,
+        "peak_subsample_offset": -0.40625,
+        "S3_modes": 445.0122758135242,
+        "S3_int_modes": 444,
+        "S3_n_runs": 3,
+        "mu_DW": -3075.2278064280135,
+        "dw_power_dbc": -22.38818185277774,
+        "N60": 3318,
+        "dN60_ddB": 89,
+        "N60_core": 3001,
+        "N60_mid": 260,
+        "N60_edge": 57,
+        "U_mean_w": 0.19310288805228293,
+        "comb_frac": 0.8551852822713243
+      }
+    },
+    {
+      "name": "dt0.125_tight",
+      "dt": 0.125,
+      "Nt": 40000,
+      "tol": 1e-08,
+      "maxiter": 60,
+      "wall_s": 269.5768039226532,
+      "status": "OK",
+      "mean_picard_iters": 3.703325,
+      "max_picard_iters": 4.0,
+      "picard_fail_count": 0.0,
+      "convergence_error_printed": false,
+      "detuning_pylle_final": -4556400000.0,
+      "observables": {
+        "P_peak_w": 235.54864584008817,
+        "P_peak_raw_w": 230.64186371291083,
+        "peak_subsample_offset": -0.3125,
+        "S3_modes": 445.0270570020642,
+        "S3_int_modes": 444,
+        "S3_n_runs": 3,
+        "mu_DW": -3075.2479455254615,
+        "dw_power_dbc": -22.566846672107722,
+        "N60": 3329,
+        "dN60_ddB": 91,
+        "N60_core": 3001,
+        "N60_mid": 253,
+        "N60_edge": 75,
+        "U_mean_w": 0.19320352938132437,
+        "comb_frac": 0.8548918872469962
+      }
+    }
+  ],
+  "convergence": {
+    "loose:P_peak_w": {
+      "levels": [
+        239.9660009480438,
+        236.10695733744564,
+        236.46063372823946,
+        235.9929252939844
+      ],
+      "h": [
+        1.0,
+        0.5,
+        0.25,
+        0.125
+      ],
+      "observed_order": null,
+      "extrapolated": null,
+      "gci": null,
+      "U_obs": 0.0019818748111724888,
+      "status": "NON_MONOTONE"
+    },
+    "loose:S3_modes": {
+      "levels": [
+        445.4403497036744,
+        445.0780426211742,
+        445.0590168424657,
+        445.1654104469118
+      ],
+      "h": [
+        1.0,
+        0.5,
+        0.25,
+        0.125
+      ],
+      "observed_order": null,
+      "extrapolated": null,
+      "gci": null,
+      "U_obs": 0.0002389979139197804,
+      "status": "NON_MONOTONE"
+    },
+    "loose:mu_DW": {
+      "levels": [
+        -3074.5562179725275,
+        -3074.9413466424753,
+        -3075.093320228138,
+        -3074.2722165223604
+      ],
+      "h": [
+        1.0,
+        0.5,
+        0.25,
+        0.125
+      ],
+      "observed_order": null,
+      "extrapolated": null,
+      "gci": null,
+      "U_obs": 0.00026708880930085557,
+      "status": "NON_MONOTONE"
+    },
+    "loose:dw_power_dbc": {
+      "levels": [
+        -22.471170889658385,
+        -21.830769000822666,
+        -22.03767694505093,
+        -25.162092374557886
+      ],
+      "h": [
+        1.0,
+        0.5,
+        0.25,
+        0.125
+      ],
+      "observed_order": -3.916525346671113,
+      "extrapolated": null,
+      "gci": null,
+      "U_obs": 0.1241715268745354,
+      "status": "ORDER_OUT_OF_RANGE"
+    },
+    "loose:U_mean_w": {
+      "levels": [
+        0.19212418424131447,
+        0.19287087060707528,
+        0.19310069669698213,
+        0.19317343526741307
+      ],
+      "h": [
+        1.0,
+        0.5,
+        0.25,
+        0.125
+      ],
+      "observed_order": 1.6597501051832444,
+      "extrapolated": 0.19320711648948588,
+      "gci": 0.00021790878284396104,
+      "U_obs": 0.00037654541024364027,
+      "status": "OK"
+    },
+    "loose:comb_frac": {
+      "levels": [
+        0.8562305855746273,
+        0.8556847285905671,
+        0.8552264770125086,
+        0.8549539984595301
+      ],
+      "h": [
+        1.0,
+        0.5,
+        0.25,
+        0.125
+      ],
+      "observed_order": 0.7499971703221051,
+      "extrapolated": 0.8545543464551484,
+      "gci": 0.0005845912639137241,
+      "U_obs": 0.0005845912639137241,
+      "status": "OK"
+    },
+    "tight:P_peak_w": {
+      "levels": [
+        240.1383848626209,
+        237.44621935576305,
+        235.43841307688334,
+        235.54864584008817
+      ],
+      "h": [
+        1.0,
+        0.5,
+        0.25,
+        0.125
+      ],
+      "observed_order": null,
+      "extrapolated": null,
+      "gci": null,
+      "U_obs": 0.008523955940051526,
+      "status": "NON_MONOTONE"
+    },
+    "tight:S3_modes": {
+      "levels": [
+        445.31642293510436,
+        445.1277683012472,
+        445.0122758135242,
+        445.0270570020642
+      ],
+      "h": [
+        1.0,
+        0.5,
+        0.25,
+        0.125
+      ],
+      "observed_order": null,
+      "extrapolated": null,
+      "gci": null,
+      "U_obs": 0.000259517901003704,
+      "status": "NON_MONOTONE"
+    },
+    "tight:mu_DW": {
+      "levels": [
+        -3074.6577159263975,
+        -3075.045050363959,
+        -3075.2278064280135,
+        -3075.2479455254615
+      ],
+      "h": [
+        1.0,
+        0.5,
+        0.25,
+        0.125
+      ],
+      "observed_order": 3.1818483430235815,
+      "extrapolated": -3075.2504396271192,
+      "gci": 1.0137798964129064e-06,
+      "U_obs": 6.548771937986937e-06,
+      "status": "OK"
+    },
+    "tight:dw_power_dbc": {
+      "levels": [
+        -20.05404204222387,
+        -21.63167533872941,
+        -22.38818185277774,
+        -22.566846672107722
+      ],
+      "h": [
+        1.0,
+        0.5,
+        0.25,
+        0.125
+      ],
+      "observed_order": 2.082096922068318,
+      "extrapolated": -22.622088649206265,
+      "gci": 0.00305243571643424,
+      "U_obs": 0.007917137113835586,
+      "status": "OK"
+    },
+    "tight:U_mean_w": {
+      "levels": [
+        0.1921921164946048,
+        0.1928612763843674,
+        0.19310288805228293,
+        0.19320352938132437
+      ],
+      "h": [
+        1.0,
+        0.5,
+        0.25,
+        0.125
+      ],
+      "observed_order": 1.2634672477175313,
+      "extrapolated": 0.19327537908525588,
+      "gci": 0.00046468479502901044,
+      "U_obs": 0.0005209083362178667,
+      "status": "OK"
+    },
+    "tight:comb_frac": {
+      "levels": [
+        0.8562467864043387,
+        0.8557089983711238,
+        0.8551852822713243,
+        0.8548918872469962
+      ],
+      "h": [
+        1.0,
+        0.5,
+        0.25,
+        0.125
+      ],
+      "observed_order": 0.8359405514022231,
+      "extrapolated": 0.8545181453298731,
+      "gci": 0.0005467144249153861,
+      "U_obs": 0.0005467144249153861,
+      "status": "OK"
+    }
+  }
+}

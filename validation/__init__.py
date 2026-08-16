@@ -31,6 +31,28 @@ convergence
     the drive kick sits outside the linear half-step (non-palindromic), and the
     field<->thermal coupling is lagged. Both fixes are opt-in, default-off flags
     on ``solve_lle_ssfm_jax``; see that module's docstring.
+convergence_lle
+    Discretization-uncertainty harness at a PHYSICAL operating point, as opposed
+    to ``convergence``/``mms``, which verify the scheme against manufactured
+    solutions. Runs a substep refinement ladder plus a spectral-resolution
+    ladder at the difficult DW point and reports, per observable, an observed
+    order, a Richardson limit and a numerical uncertainty band ``U_obs``. Those
+    bands are what any cross-code tolerance must respect: a threshold tighter
+    than a code's own discretization uncertainty is not a physics test.
+    It also redefines the ill-conditioned observables (band-limited peak, sub-bin
+    3 dB span, fixed-band DW centroid) and records the conditioning of the ones
+    that stay diagnostic-only (the -60 dBc line count).
+criteria
+    Acceptance criteria for the cross-code comparison, v2. Every criterion is
+    classified HARD (must hold for any correct solver, independent of the other
+    code), GATED (a cross-code agreement claim, and therefore only meaningful to
+    the precision both codes actually resolve) or DIAGNOSTIC (reported, never
+    decisive). GATED tolerances are *derived* from the measured uncertainty bands
+    in ``convergence_lle`` and in pyLLE's own refinement study, not chosen: a
+    criterion whose uncertainty could not be measured has no tolerance at all and
+    is demoted rather than given a guessed number. The derived mapping is
+    fingerprinted before any comparison value is read, so a tolerance cannot be
+    edited after seeing a result without the report failing to build.
 figures
     Standalone figure scripts for the modules above.
 
@@ -41,4 +63,12 @@ each has its own harness.
 
 from __future__ import annotations
 
-__all__ = ["analytic_cw", "convergence", "figures", "mms", "noise_off_identity"]
+__all__ = [
+    "analytic_cw",
+    "convergence",
+    "convergence_lle",
+    "criteria",
+    "figures",
+    "mms",
+    "noise_off_identity",
+]

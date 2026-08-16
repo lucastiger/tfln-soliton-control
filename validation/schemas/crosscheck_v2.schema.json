@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/lucastiger/soliton-control/validation/schemas/crosscheck_v2.schema.json",
+  "title": "Cross-code comparison report, v2 (convergence-aware criteria)",
+  "description": "Output of the pyLLE cross-check under validation/criteria.py. Criteria are classified HARD / GATED / DIAGNOSTIC; GATED tolerances are derived from measured convergence studies and fingerprinted, and DIAGNOSTIC results are structurally unable to affect the overall verdict.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "criteria_version",
+    "tolerance_fingerprint",
+    "criteria_provenance",
+    "tolerances",
+    "checks",
+    "overall"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {"const": "2.0"},
+    "criteria_version": {"type": "string"},
+    "tolerance_fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "sha256 over the (criterion -> tolerance) mapping, taken at derivation before any comparison value is read."
+    },
+    "criteria_provenance": {
+      "type": "object",
+      "required": [
+        "criteria_version", "coverage_factor", "floor_tolerances_relative",
+        "floor_tolerances_absolute_modes", "hard_thresholds", "sources",
+        "git_commit", "git_dirty", "argv"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "criteria_version": {"type": "string"},
+        "coverage_factor": {"type": "number", "exclusiveMinimum": 0},
+        "max_tolerance": {"type": "number", "exclusiveMinimum": 0},
+        "floor_tolerances_relative": {
+          "type": "object", "additionalProperties": {"type": "number"}
+        },
+        "floor_tolerances_absolute_modes": {
+          "type": "object", "additionalProperties": {"type": "number"}
+        },
+        "hard_thresholds": {
+          "type": "object", "additionalProperties": {"type": "number"}
+        },
+        "sources": {
+          "type": "object",
+          "required": ["ours", "pylle"],
+          "properties": {
+            "ours": {"$ref": "#/$defs/convergenceSource"},
+            "pylle": {"$ref": "#/$defs/convergenceSource"}
+          }
+        },
+        "git_commit": {"type": "string"},
+        "git_dirty": {"type": "boolean"},
+        "argv": {"type": "array", "items": {"type": "string"}},
+        "timestamp_utc": {"type": "string"},
+        "python": {"type": "string"},
+        "platform": {"type": "string"},
+        "hostname": {"type": "string"}
+      }
+    },
+    "tolerances": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/derivedTolerance"}
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/check"},
+      "description": "Must contain every HARD criterion; enforced by validate_report(), which a JSON Schema cannot express over a heterogeneous array."
+    },
+    "overall": {"enum": ["PASS", "FAIL"]},
+    "overall_qualified": {
+      "type": "boolean",
+      "description": "True when a GATED check was demoted because its tolerance could not be derived. The run is then not a clean pass even if nothing failed."
+    },
+    "overall_qualification_reasons": {
+      "type": "array", "items": {"type": "string"}
+    }
+  },
+  "$defs": {
+    "verdict": {
+      "enum": ["PASS", "FAIL", "NOT_MEASURED", "UNDERIVED", "DIAGNOSTIC"]
+    },
+    "criterionClass": {"enum": ["HARD", "GATED", "DIAGNOSTIC"]},
+    "convergenceSource": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "additionalProperties": true,
+      "properties": {
+        "path": {"type": "string"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "level_key": {"type": "string"},
+        "tag": {"type": "string"}
+      }
+    },
+    "uncertaintySource": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "file": {"type": "string"},
+        "key": {"type": "string"},
+        "convergence_status": {"type": ["string", "null"]},
+        "discretization": {"type": "string"},
+        "reason": {"type": "string"}
+      }
+    },
+    "derivedTolerance": {
+      "type": "object",
+      "required": ["cid", "name", "tolerance", "status", "kind"],
+      "additionalProperties": true,
+      "properties": {
+        "cid": {"type": "string"},
+        "name": {"type": "string"},
+        "tolerance": {"type": ["number", "null"]},
+        "status": {"enum": ["DERIVED", "UNDERIVED"]},
+        "kind": {"enum": ["relative", "absolute"]},
+        "u_ours": {"type": ["number", "null"]},
+        "u_pylle": {"type": ["number", "null"]},
+        "coverage_factor": {"type": "number"},
+        "floor": {"type": ["number", "null"]},
+        "reason": {"type": "string"},
+        "source_ours": {"$ref": "#/$defs/uncertaintySource"},
+        "source_pylle": {"$ref": "#/$defs/uncertaintySource"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "DERIVED"}}},
+          "then": {
+            "properties": {
+              "tolerance": {"type": "number"},
+              "u_ours": {"type": "number"},
+              "u_pylle": {"type": "number"}
+            },
+            "required": ["u_ours", "u_pylle"],
+            "description": "A DERIVED tolerance must expose both uncertainties it came from."
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "UNDERIVED"}}},
+          "then": {
+            "properties": {"tolerance": {"type": "null"}},
+            "required": ["reason"],
+            "description": "An UNDERIVED tolerance must be null and must say why; it never falls back to a hand-picked number."
+          }
+        }
+      ]
+    },
+    "check": {
+      "type": "object",
+      "required": ["cid", "name", "class", "verdict"],
+      "additionalProperties": true,
+      "properties": {
+        "cid": {"type": "string", "pattern": "^[HGD][0-9]+$"},
+        "name": {"type": "string"},
+        "class": {"$ref": "#/$defs/criterionClass"},
+        "quantity": {"type": "string"},
+        "verdict": {"$ref": "#/$defs/verdict"},
+        "value": {"type": ["number", "boolean", "null"]},
+        "threshold": {"type": ["number", "null"]},
+        "ours": {"type": ["number", "null"]},
+        "pylle": {"type": ["number", "null"]},
+        "diff": {"type": ["number", "null"]},
+        "tolerance": {"type": ["number", "null"]},
+        "tolerance_kind": {"enum": ["relative", "absolute"]},
+        "tolerance_status": {"enum": ["DERIVED", "UNDERIVED"]},
+        "u_ours": {"type": ["number", "null"]},
+        "u_pylle": {"type": ["number", "null"]},
+        "coverage_factor": {"type": "number"},
+        "demoted_to": {"const": "DIAGNOSTIC"},
+        "reason": {"type": "string"},
+        "data": {},
+        "note": {"type": "string"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"class": {"const": "DIAGNOSTIC"}}},
+          "then": {
+            "properties": {"verdict": {"const": "DIAGNOSTIC"}},
+            "description": "A DIAGNOSTIC criterion can only ever carry the DIAGNOSTIC verdict, so it cannot contribute a PASS or FAIL to the overall result."
+          }
+        },
+        {
+          "if": {"properties": {"class": {"const": "HARD"}}},
+          "then": {
+            "properties": {
+              "verdict": {"enum": ["PASS", "FAIL", "NOT_MEASURED"]}
+            },
+            "description": "HARD checks are never UNDERIVED and never demoted."
+          }
+        }
+      ]
+    }
+  }
+}

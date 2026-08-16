@@ -1,0 +1,3703 @@
+{
+  "schema_version": "2.0",
+  "criteria_version": "2.0",
+  "tolerance_fingerprint": "98ea9e2f23be59f495a92148fc2318343ace7a7087299a04dac317a600c03653",
+  "criteria_provenance": {
+    "criteria_version": "2.0",
+    "coverage_factor": 2.0,
+    "floor_tolerances_relative": {
+      "G1": 1e-06,
+      "G2": 1e-06,
+      "G3": 0.0001,
+      "G4": 0.0001,
+      "G6": 0.0001
+    },
+    "floor_tolerances_absolute_modes": {
+      "G5": 0.05
+    },
+    "max_tolerance": 0.25,
+    "hard_thresholds": {
+      "H1": 1e-12,
+      "H2": 1e-06,
+      "H5": 1e-12,
+      "H6": 1e-06
+    },
+    "sources": {
+      "ours": {
+        "path": "/home/user/soliton-control/validation/results/convergence_lle_dw30k.json",
+        "sha256": "9210cc74562d016696b627d255f11725f2fe7601ea070585ee05a8099e479f64",
+        "level_key": "numerical_uncertainty_at_n1"
+      },
+      "pylle": {
+        "path": "/home/user/soliton-control/validation/results/pylle_refinement_dw30k.json",
+        "sha256": "a5609cdf94d780a37291164a40ce14557f5da90a946c81dad41391294cf904ad",
+        "tag": "tight"
+      }
+    },
+    "git_commit": "f37b1c5fbddff35b79a2d797944a27604837aeac",
+    "git_dirty": true,
+    "argv": [
+      "--pylle-python",
+      "/opt/pylleroot/pylle-env/bin/python",
+      "--julia-bin",
+      "/opt/pylleroot/pylle-env/bin/julia",
+      "--vendored-kernel",
+      "third_party/pylle/ComputeLLE.jl",
+      "--mu-half",
+      "3300",
+      "--roundtrips",
+      "5000",
+      "--dw-start",
+      "16",
+      "--dw-end",
+      "30",
+      "--scan",
+      "3,5,8,16,30,40,50",
+      "--bisect-iters",
+      "5",
+      "--ours-levels",
+      "1,2,4,8,16",
+      "--pylle-levels",
+      "1,0.5,0.25,0.125"
+    ],
+    "timestamp_utc": "2026-08-16T20:05:19.445604+00:00",
+    "python": "3.11.15",
+    "platform": "Linux-6.18.5-fc-v20-x86_64-with-glibc2.39",
+    "hostname": "vm"
+  },
+  "tolerances": {
+    "G1": {
+      "cid": "G1",
+      "name": "intracavity_power_U_mean",
+      "tolerance": null,
+      "status": "UNDERIVED",
+      "kind": "relative",
+      "u_ours": null,
+      "u_pylle": 0.0005209083362178667,
+      "coverage_factor": 2.0,
+      "floor": 1e-06,
+      "reason": "ours: convergence status NON_MONOTONE",
+      "source_ours": {
+        "file": "convergence_lle_dw30k.json",
+        "key": "U_mean_w",
+        "level_key": "numerical_uncertainty_at_n1",
+        "convergence_status": "NON_MONOTONE",
+        "reason": "convergence status NON_MONOTONE"
+      },
+      "source_pylle": {
+        "file": "pylle_refinement_dw30k.json",
+        "key": "tight:U_mean_w",
+        "convergence_status": "OK",
+        "discretization": "dt ladder, tol tag 'tight'"
+      }
+    },
+    "G2": {
+      "cid": "G2",
+      "name": "comb_energy_fraction",
+      "tolerance": 0.008601512520631209,
+      "status": "DERIVED",
+      "kind": "relative",
+      "u_ours": 0.004265865416094758,
+      "u_pylle": 0.0005467144249153861,
+      "coverage_factor": 2.0,
+      "floor": 1e-06,
+      "reason": "clip(2.0*sqrt(U_o^2+U_p^2)=0.00860151, floor=1e-06, hi=0.25)",
+      "source_ours": {
+        "file": "convergence_lle_dw30k.json",
+        "key": "comb_frac",
+        "level_key": "numerical_uncertainty_at_n1",
+        "convergence_status": "OK",
+        "discretization": "n_substeps=n1"
+      },
+      "source_pylle": {
+        "file": "pylle_refinement_dw30k.json",
+        "key": "tight:comb_frac",
+        "convergence_status": "OK",
+        "discretization": "dt ladder, tol tag 'tight'"
+      }
+    },
+    "G3": {
+      "cid": "G3",
+      "name": "band_limited_peak_power",
+      "tolerance": null,
+      "status": "UNDERIVED",
+      "kind": "relative",
+      "u_ours": 0.004801386081268244,
+      "u_pylle": null,
+      "coverage_factor": 2.0,
+      "floor": 0.0001,
+      "reason": "pyLLE: convergence status NON_MONOTONE",
+      "source_ours": {
+        "file": "convergence_lle_dw30k.json",
+        "key": "P_peak_w",
+        "level_key": "numerical_uncertainty_at_n1",
+        "convergence_status": "OK",
+        "discretization": "n_substeps=n1"
+      },
+      "source_pylle": {
+        "file": "pylle_refinement_dw30k.json",
+        "key": "tight:P_peak_w",
+        "convergence_status": "NON_MONOTONE",
+        "reason": "convergence status NON_MONOTONE"
+      }
+    },
+    "G4": {
+      "cid": "G4",
+      "name": "subbin_3db_span",
+      "tolerance": null,
+      "status": "UNDERIVED",
+      "kind": "relative",
+      "u_ours": 0.0005684868498042653,
+      "u_pylle": null,
+      "coverage_factor": 2.0,
+      "floor": 0.0001,
+      "reason": "pyLLE: convergence status NON_MONOTONE",
+      "source_ours": {
+        "file": "convergence_lle_dw30k.json",
+        "key": "S3_modes",
+        "level_key": "numerical_uncertainty_at_n1",
+        "convergence_status": "OK",
+        "discretization": "n_substeps=n1"
+      },
+      "source_pylle": {
+        "file": "pylle_refinement_dw30k.json",
+        "key": "tight:S3_modes",
+        "convergence_status": "NON_MONOTONE",
+        "reason": "convergence status NON_MONOTONE"
+      }
+    },
+    "G5": {
+      "cid": "G5",
+      "name": "dw_centroid_fixed_band",
+      "tolerance": 0.5340338311095446,
+      "status": "DERIVED",
+      "kind": "absolute",
+      "u_ours": 8.658037008807832e-05,
+      "u_pylle": 6.548771937986937e-06,
+      "coverage_factor": 2.0,
+      "floor": 0.05,
+      "reason": "max(2.0*sqrt(U_o^2+U_p^2)=0.534034 modes [U_o=0.266256, U_p=0.0201391 modes], floor=0.05); no relative ceiling applied to an absolute tolerance",
+      "source_ours": {
+        "file": "convergence_lle_dw30k.json",
+        "key": "mu_DW",
+        "level_key": "numerical_uncertainty_at_n1",
+        "convergence_status": "OK",
+        "discretization": "n_substeps=n1",
+        "absolute_scale": 3075.2508890796776,
+        "u_absolute": 0.26625636009021036
+      },
+      "source_pylle": {
+        "file": "pylle_refinement_dw30k.json",
+        "key": "tight:mu_DW",
+        "convergence_status": "OK",
+        "discretization": "dt ladder, tol tag 'tight'",
+        "absolute_scale": 3075.2504396271192,
+        "u_absolute": 0.02013911378131207
+      }
+    },
+    "G6": {
+      "cid": "G6",
+      "name": "dw_band_power_dbc",
+      "tolerance": 0.25,
+      "status": "DERIVED",
+      "kind": "relative",
+      "u_ours": 0.31651687927222255,
+      "u_pylle": 0.007917137113835586,
+      "coverage_factor": 2.0,
+      "floor": 0.0001,
+      "reason": "clip(2.0*sqrt(U_o^2+U_p^2)=0.633232, floor=0.0001, hi=0.25)",
+      "source_ours": {
+        "file": "convergence_lle_dw30k.json",
+        "key": "dw_power_dbc",
+        "level_key": "numerical_uncertainty_at_n1",
+        "convergence_status": "OK",
+        "discretization": "n_substeps=n1"
+      },
+      "source_pylle": {
+        "file": "pylle_refinement_dw30k.json",
+        "key": "tight:dw_power_dbc",
+        "convergence_status": "OK",
+        "discretization": "dt ladder, tol tag 'tight'"
+      }
+    }
+  },
+  "checks": [
+    {
+      "cid": "H1",
+      "name": "parameter_round_trip_max_rel",
+      "class": "HARD",
+      "quantity": "ours -> pyLLE -> ours round trip of every scalar",
+      "verdict": "PASS",
+      "value": 1.226433020069766e-16,
+      "threshold": 1e-12
+    },
+    {
+      "cid": "H2",
+      "name": "dispersion_refit_max_rel",
+      "class": "HARD",
+      "quantity": "pyLLE's spline-refit D_int vs ours, after un-mirroring",
+      "verdict": "PASS",
+      "value": 2.3217715595696414e-12,
+      "threshold": 1e-06
+    },
+    {
+      "cid": "H3",
+      "name": "dispersion_mirror_applied",
+      "class": "HARD",
+      "quantity": "D_int handed to pyLLE is mirrored mu -> -mu",
+      "verdict": "PASS",
+      "value": true
+    },
+    {
+      "cid": "H7",
+      "name": "seed_arrays_identical",
+      "class": "HARD",
+      "quantity": "sha256 of each code's seed after the documented conjugate map",
+      "verdict": "PASS",
+      "value": true
+    },
+    {
+      "cid": "H4",
+      "name": "pump_mode_reference_matches",
+      "class": "HARD",
+      "quantity": "|f_pmp_used - csv_mu0_resonance|",
+      "verdict": "PASS",
+      "value": 0.0,
+      "threshold": 0.0
+    },
+    {
+      "cid": "H5",
+      "name": "detuning_endpoint_match",
+      "class": "HARD",
+      "quantity": "|dw_final_ours - (-dw_final_pylle)| / |dw_final_ours|",
+      "verdict": "PASS",
+      "value": 0.0,
+      "threshold": 1e-12
+    },
+    {
+      "cid": "H6",
+      "name": "delta_omega_eff_equals_programmed",
+      "class": "HARD",
+      "quantity": "max|delta_omega_eff - programmed ramp| / max|ramp|",
+      "verdict": "PASS",
+      "value": 0.0,
+      "threshold": 1e-06
+    },
+    {
+      "cid": "G1",
+      "name": "intracavity_power_U_mean",
+      "class": "GATED",
+      "quantity": "sum|E_j|^2/N/t_r  (Parseval-exact mean intracavity power)",
+      "verdict": "UNDERIVED",
+      "diff": 0.0017995675281184723,
+      "demoted_to": "DIAGNOSTIC",
+      "reason": "ours: convergence status NON_MONOTONE",
+      "ours": 0.19285584658353186,
+      "pylle": 0.19320352938132437,
+      "u_ours": null,
+      "u_pylle": 0.0005209083362178667,
+      "coverage_factor": 2.0,
+      "tolerance": null,
+      "tolerance_kind": "relative",
+      "tolerance_status": "UNDERIVED",
+      "source_ours": {
+        "file": "convergence_lle_dw30k.json",
+        "key": "U_mean_w",
+        "level_key": "numerical_uncertainty_at_n1",
+        "convergence_status": "NON_MONOTONE",
+        "reason": "convergence status NON_MONOTONE"
+      },
+      "source_pylle": {
+        "file": "pylle_refinement_dw30k.json",
+        "key": "tight:U_mean_w",
+        "convergence_status": "OK",
+        "discretization": "dt ladder, tol tag 'tight'"
+      }
+    },
+    {
+      "cid": "G2",
+      "name": "comb_energy_fraction",
+      "class": "GATED",
+      "quantity": "(sum|E_mu|^2 - |E_0|^2)/sum|E_mu|^2",
+      "verdict": "PASS",
+      "diff": 0.0024731146718623234,
+      "ours": 0.8570113746515999,
+      "pylle": 0.8548918872469962,
+      "u_ours": 0.004265865416094758,
+      "u_pylle": 0.0005467144249153861,
+      "coverage_factor": 2.0,
+      "tolerance": 0.008601512520631209,
+      "tolerance_kind": "relative",
+      "tolerance_status": "DERIVED",
+      "source_ours": {
+        "file": "convergence_lle_dw30k.json",
+        "key": "comb_frac",
+        "level_key": "numerical_uncertainty_at_n1",
+        "convergence_status": "OK",
+        "discretization": "n_substeps=n1"
+      },
+      "source_pylle": {
+        "file": "pylle_refinement_dw30k.json",
+        "key": "tight:comb_frac",
+        "convergence_status": "OK",
+        "discretization": "dt ladder, tol tag 'tight'"
+      }
+    },
+    {
+      "cid": "G3",
+      "name": "band_limited_peak_power",
+      "class": "GATED",
+      "quantity": "max|E_up|^2/t_r on a 32x zero-padded FFT",
+      "verdict": "UNDERIVED",
+      "diff": 0.006886291737932083,
+      "demoted_to": "DIAGNOSTIC",
+      "reason": "pyLLE: convergence status NON_MONOTONE",
+      "ours": 233.92658914635848,
+      "pylle": 235.54864584008817,
+      "u_ours": 0.004801386081268244,
+      "u_pylle": null,
+      "coverage_factor": 2.0,
+      "tolerance": null,
+      "tolerance_kind": "relative",
+      "tolerance_status": "UNDERIVED",
+      "source_ours": {
+        "file": "convergence_lle_dw30k.json",
+        "key": "P_peak_w",
+        "level_key": "numerical_uncertainty_at_n1",
+        "convergence_status": "OK",
+        "discretization": "n_substeps=n1"
+      },
+      "source_pylle": {
+        "file": "pylle_refinement_dw30k.json",
+        "key": "tight:P_peak_w",
+        "convergence_status": "NON_MONOTONE",
+        "reason": "convergence status NON_MONOTONE"
+      }
+    },
+    {
+      "cid": "G4",
+      "name": "subbin_3db_span",
+      "class": "GATED",
+      "quantity": "3 dB envelope span by dB-linear level crossing",
+      "verdict": "UNDERIVED",
+      "diff": 0.0005505503175498706,
+      "demoted_to": "DIAGNOSTIC",
+      "reason": "pyLLE: convergence status NON_MONOTONE",
+      "ours": 444.78204721451345,
+      "pylle": 445.0270570020642,
+      "u_ours": 0.0005684868498042653,
+      "u_pylle": null,
+      "coverage_factor": 2.0,
+      "tolerance": null,
+      "tolerance_kind": "relative",
+      "tolerance_status": "UNDERIVED",
+      "source_ours": {
+        "file": "convergence_lle_dw30k.json",
+        "key": "S3_modes",
+        "level_key": "numerical_uncertainty_at_n1",
+        "convergence_status": "OK",
+        "discretization": "n_substeps=n1"
+      },
+      "source_pylle": {
+        "file": "pylle_refinement_dw30k.json",
+        "key": "tight:S3_modes",
+        "convergence_status": "NON_MONOTONE",
+        "reason": "convergence status NON_MONOTONE"
+      }
+    },
+    {
+      "cid": "G5",
+      "name": "dw_centroid_fixed_band",
+      "class": "GATED",
+      "quantity": "pedestal-subtracted power centroid over a fixed mu band",
+      "verdict": "PASS",
+      "diff": 0.26331280587419315,
+      "ours": -3074.9846327195874,
+      "pylle": -3075.2479455254615,
+      "u_ours": 8.658037008807832e-05,
+      "u_pylle": 6.548771937986937e-06,
+      "coverage_factor": 2.0,
+      "tolerance": 0.5340338311095446,
+      "tolerance_kind": "absolute",
+      "tolerance_status": "DERIVED",
+      "source_ours": {
+        "file": "convergence_lle_dw30k.json",
+        "key": "mu_DW",
+        "level_key": "numerical_uncertainty_at_n1",
+        "convergence_status": "OK",
+        "discretization": "n_substeps=n1",
+        "absolute_scale": 3075.2508890796776,
+        "u_absolute": 0.26625636009021036
+      },
+      "source_pylle": {
+        "file": "pylle_refinement_dw30k.json",
+        "key": "tight:mu_DW",
+        "convergence_status": "OK",
+        "discretization": "dt ladder, tol tag 'tight'",
+        "absolute_scale": 3075.2504396271192,
+        "u_absolute": 0.02013911378131207
+      }
+    },
+    {
+      "cid": "G6",
+      "name": "dw_band_power_dbc",
+      "class": "GATED",
+      "quantity": "10*log10(sum p over DW band / max p)",
+      "verdict": "PASS",
+      "diff": 0.24244149131218795,
+      "ours": -29.788915857068755,
+      "pylle": -22.566846672107722,
+      "u_ours": 0.31651687927222255,
+      "u_pylle": 0.007917137113835586,
+      "coverage_factor": 2.0,
+      "tolerance": 0.25,
+      "tolerance_kind": "relative",
+      "tolerance_status": "DERIVED",
+      "source_ours": {
+        "file": "convergence_lle_dw30k.json",
+        "key": "dw_power_dbc",
+        "level_key": "numerical_uncertainty_at_n1",
+        "convergence_status": "OK",
+        "discretization": "n_substeps=n1"
+      },
+      "source_pylle": {
+        "file": "pylle_refinement_dw30k.json",
+        "key": "tight:dw_power_dbc",
+        "convergence_status": "OK",
+        "discretization": "dt ladder, tol tag 'tight'"
+      }
+    },
+    {
+      "cid": "G7",
+      "name": "existence_edges",
+      "class": "GATED",
+      "quantity": "single-soliton existence bracket, lower and upper edge",
+      "verdict": "FAIL",
+      "estimate_ours": 5.890625,
+      "estimate_pylle": 6.171875,
+      "uncertainty_ours": 0.046875,
+      "uncertainty_pylle": 0.046875,
+      "brackets_overlap": false,
+      "abs_diff": 0.28125,
+      "tolerance": 0.13258252147247765,
+      "edge": "lower",
+      "bracket_ours": [
+        5.84375,
+        5.9375
+      ],
+      "bracket_pylle": [
+        6.125,
+        6.21875
+      ],
+      "u_ours": 0.0,
+      "u_pylle": 0.0,
+      "coverage_factor": 2.0
+    },
+    {
+      "cid": "G7",
+      "name": "existence_edges",
+      "class": "GATED",
+      "quantity": "single-soliton existence bracket, lower and upper edge",
+      "verdict": "FAIL",
+      "estimate_ours": 37.96875,
+      "estimate_pylle": 37.03125,
+      "uncertainty_ours": 0.15625,
+      "uncertainty_pylle": 0.15625,
+      "brackets_overlap": false,
+      "abs_diff": 0.9375,
+      "tolerance": 0.4419417382415922,
+      "edge": "upper",
+      "bracket_ours": [
+        37.8125,
+        38.125
+      ],
+      "bracket_pylle": [
+        36.875,
+        37.1875
+      ],
+      "u_ours": 0.0,
+      "u_pylle": 0.0,
+      "coverage_factor": 2.0
+    },
+    {
+      "cid": "D1",
+      "name": "comb_line_count_60dbc",
+      "class": "DIAGNOSTIC",
+      "quantity": "count of modes >= -60 dBc, with dN60/ddB and core/mid/edge split",
+      "verdict": "DIAGNOSTIC",
+      "data": {
+        "ours": {
+          "N60": 3324,
+          "dN60_ddB": 92,
+          "N60_core": 3001,
+          "N60_mid": 246,
+          "N60_edge": 77
+        },
+        "pylle": {
+          "N60": 3329,
+          "dN60_ddB": 91,
+          "N60_core": 3001,
+          "N60_mid": 253,
+          "N60_edge": 75
+        },
+        "note": "conditioning dN60/ddB is the number of lines a 1 dB threshold shift moves; the core counts are what a physical comb-width claim would rest on"
+      },
+      "note": "conditioning 85-121 lines per dB; core identical (3001) between codes at every level -- it measures the wing crossing"
+    },
+    {
+      "cid": "D2",
+      "name": "integer_3db_span",
+      "class": "DIAGNOSTIC",
+      "quantity": "legacy integer 3 dB extent and its quantum 1/span",
+      "verdict": "DIAGNOSTIC",
+      "data": {
+        "ours": 445,
+        "pylle": 444,
+        "quantum_modes": 1,
+        "note": "one mode is the smallest resolvable difference; v1's 0.23% agreement was exactly one quantum"
+      },
+      "note": ""
+    },
+    {
+      "cid": "D3",
+      "name": "integer_dw_argmax",
+      "class": "DIAGNOSTIC",
+      "quantity": "raw argmax mode index on each side",
+      "verdict": "DIAGNOSTIC",
+      "data": {
+        "ours": -3075.2501757214577,
+        "pylle": -3075.2479455254615,
+        "note": "the continuous centroid is the gated quantity; the rounded index is reported only for continuity with v1"
+      },
+      "note": ""
+    },
+    {
+      "cid": "D4",
+      "name": "raw_peak_power",
+      "class": "DIAGNOSTIC",
+      "quantity": "legacy max|E_j|^2/t_r and the sub-sample offset",
+      "verdict": "DIAGNOSTIC",
+      "data": {
+        "ours": 228.42337794850388,
+        "pylle": 230.64186371291083,
+        "ours_band_limited": 232.82219575226196,
+        "pylle_band_limited": 235.54864584008817,
+        "ours_subsample_offset": -0.28125,
+        "pylle_subsample_offset": -0.3125,
+        "note": "the raw grid peak carries a sampling-phase bias; the band-limited peak is the gated quantity"
+      },
+      "note": ""
+    },
+    {
+      "cid": "D5",
+      "name": "spectral_residual_by_band",
+      "class": "DIAGNOSTIC",
+      "quantity": "median |dB| residual per mu band",
+      "verdict": "DIAGNOSTIC",
+      "data": {
+        "finest_levels": [
+          {
+            "mu_band": [
+              0,
+              50
+            ],
+            "n_modes": 99,
+            "median_ours_minus_pylle_db": -0.04785379658534694,
+            "p90_abs_db": 0.047902881438621134,
+            "median_abs_Dint_t_r": 0.007923019899146637,
+            "max_abs_Dint_t_r": 0.021893482006269054
+          },
+          {
+            "mu_band": [
+              50,
+              222
+            ],
+            "n_modes": 344,
+            "median_ours_minus_pylle_db": -0.047713084411739715,
+            "p90_abs_db": 0.047895146839869084,
+            "median_abs_Dint_t_r": 0.025147274452270885,
+            "max_abs_Dint_t_r": 0.06898323295751643
+          },
+          {
+            "mu_band": [
+              222,
+              500
+            ],
+            "n_modes": 556,
+            "median_ours_minus_pylle_db": -0.047256471223388274,
+            "p90_abs_db": 0.04759445311491817,
+            "median_abs_Dint_t_r": 0.13636433649595775,
+            "max_abs_Dint_t_r": 0.26276835983457436
+          },
+          {
+            "mu_band": [
+              500,
+              1000
+            ],
+            "n_modes": 1000,
+            "median_ours_minus_pylle_db": -0.04785812197671291,
+            "p90_abs_db": 0.04990099115720028,
+            "median_abs_Dint_t_r": 0.5523677550936462,
+            "max_abs_Dint_t_r": 1.0085196801714351
+          },
+          {
+            "mu_band": [
+              1000,
+              1500
+            ],
+            "n_modes": 1000,
+            "median_ours_minus_pylle_db": -0.055553941903461634,
+            "p90_abs_db": 0.06388255783906586,
+            "median_abs_Dint_t_r": 1.3480690421155357,
+            "max_abs_Dint_t_r": 2.12308170886131
+          },
+          {
+            "mu_band": [
+              1500,
+              2000
+            ],
+            "n_modes": 1000,
+            "median_ours_minus_pylle_db": -0.0657948178586345,
+            "p90_abs_db": 0.0813597252821026,
+            "median_abs_Dint_t_r": 2.1075238926982056,
+            "max_abs_Dint_t_r": 3.119217373552735
+          },
+          {
+            "mu_band": [
+              2000,
+              2500
+            ],
+            "n_modes": 1000,
+            "median_ours_minus_pylle_db": -0.047426322698896684,
+            "p90_abs_db": 0.07600978149185948,
+            "median_abs_Dint_t_r": 2.616415325426691,
+            "max_abs_Dint_t_r": 3.303004113335108
+          },
+          {
+            "mu_band": [
+              2500,
+              3000
+            ],
+            "n_modes": 1000,
+            "median_ours_minus_pylle_db": 0.1604686453420996,
+            "p90_abs_db": 0.40242839484581056,
+            "median_abs_Dint_t_r": 1.8234886038137579,
+            "max_abs_Dint_t_r": 3.068619635192348
+          },
+          {
+            "mu_band": [
+              3000,
+              3300
+            ],
+            "n_modes": 602,
+            "median_ours_minus_pylle_db": 0.32321207014888387,
+            "p90_abs_db": 0.44763400618555804,
+            "median_abs_Dint_t_r": 0.6757022250466349,
+            "max_abs_Dint_t_r": 2.9325032674823337
+          }
+        ],
+        "matched_coarse_n1_vs_dt1_shipped": [
+          {
+            "mu_band": [
+              0,
+              50
+            ],
+            "n_modes": 99,
+            "median_ours_minus_pylle_db": 0.07078089115452357,
+            "p90_abs_db": 0.08442638854073366,
+            "median_abs_Dint_t_r": 0.007923019899146637,
+            "max_abs_Dint_t_r": 0.021893482006269054
+          },
+          {
+            "mu_band": [
+              50,
+              222
+            ],
+            "n_modes": 344,
+            "median_ours_minus_pylle_db": 0.0695871444352445,
+            "p90_abs_db": 0.10994216863901798,
+            "median_abs_Dint_t_r": 0.025147274452270885,
+            "max_abs_Dint_t_r": 0.06898323295751643
+          },
+          {
+            "mu_band": [
+              222,
+              500
+            ],
+            "n_modes": 556,
+            "median_ours_minus_pylle_db": 0.00036400355116406047,
+            "p90_abs_db": 0.12810694566625713,
+            "median_abs_Dint_t_r": 0.13636433649595775,
+            "max_abs_Dint_t_r": 0.26276835983457436
+          },
+          {
+            "mu_band": [
+              500,
+              1000
+            ],
+            "n_modes": 1000,
+            "median_ours_minus_pylle_db": -0.2834556510186914,
+            "p90_abs_db": 0.5462434470601586,
+            "median_abs_Dint_t_r": 0.5523677550936462,
+            "max_abs_Dint_t_r": 1.0085196801714351
+          },
+          {
+            "mu_band": [
+              1000,
+              1500
+            ],
+            "n_modes": 1000,
+            "median_ours_minus_pylle_db": -1.096578769879148,
+            "p90_abs_db": 1.6262277878069227,
+            "median_abs_Dint_t_r": 1.3480690421155357,
+            "max_abs_Dint_t_r": 2.12308170886131
+          },
+          {
+            "mu_band": [
+              1500,
+              2000
+            ],
+            "n_modes": 1000,
+            "median_ours_minus_pylle_db": -2.683736626920698,
+            "p90_abs_db": 3.5554688624912667,
+            "median_abs_Dint_t_r": 2.1075238926982056,
+            "max_abs_Dint_t_r": 3.119217373552735
+          },
+          {
+            "mu_band": [
+              2000,
+              2500
+            ],
+            "n_modes": 1000,
+            "median_ours_minus_pylle_db": -4.976589888179525,
+            "p90_abs_db": 6.101965175936529,
+            "median_abs_Dint_t_r": 2.616415325426691,
+            "max_abs_Dint_t_r": 3.303004113335108
+          },
+          {
+            "mu_band": [
+              2500,
+              3000
+            ],
+            "n_modes": 1000,
+            "median_ours_minus_pylle_db": -5.632281247585979,
+            "p90_abs_db": 6.67344925461003,
+            "median_abs_Dint_t_r": 1.8234886038137579,
+            "max_abs_Dint_t_r": 3.068619635192348
+          },
+          {
+            "mu_band": [
+              3000,
+              3300
+            ],
+            "n_modes": 602,
+            "median_ours_minus_pylle_db": -2.6622372526929396,
+            "p90_abs_db": 3.858690667889371,
+            "median_abs_Dint_t_r": 0.6757022250466349,
+            "max_abs_Dint_t_r": 2.9325032674823337
+          }
+        ],
+        "dt1_tight_picard": [
+          {
+            "mu_band": [
+              0,
+              50
+            ],
+            "n_modes": 99,
+            "median_ours_minus_pylle_db": 0.07243089995357721,
+            "p90_abs_db": 0.07394272935599559,
+            "median_abs_Dint_t_r": 0.007923019899146637,
+            "max_abs_Dint_t_r": 0.021893482006269054
+          },
+          {
+            "mu_band": [
+              50,
+              222
+            ],
+            "n_modes": 344,
+            "median_ours_minus_pylle_db": 0.06418697484597047,
+            "p90_abs_db": 0.07246630565648218,
+            "median_abs_Dint_t_r": 0.025147274452270885,
+            "max_abs_Dint_t_r": 0.06898323295751643
+          },
+          {
+            "mu_band": [
+              222,
+              500
+            ],
+            "n_modes": 556,
+            "median_ours_minus_pylle_db": 0.002110195156690864,
+            "p90_abs_db": 0.053915474857152645,
+            "median_abs_Dint_t_r": 0.13636433649595775,
+            "max_abs_Dint_t_r": 0.26276835983457436
+          },
+          {
+            "mu_band": [
+              500,
+              1000
+            ],
+            "n_modes": 1000,
+            "median_ours_minus_pylle_db": -0.2772280799540141,
+            "p90_abs_db": 0.5321140543175474,
+            "median_abs_Dint_t_r": 0.5523677550936462,
+            "max_abs_Dint_t_r": 1.0085196801714351
+          },
+          {
+            "mu_band": [
+              1000,
+              1500
+            ],
+            "n_modes": 1000,
+            "median_ours_minus_pylle_db": -1.1054362713861536,
+            "p90_abs_db": 1.6395594226969643,
+            "median_abs_Dint_t_r": 1.3480690421155357,
+            "max_abs_Dint_t_r": 2.12308170886131
+          },
+          {
+            "mu_band": [
+              1500,
+              2000
+            ],
+            "n_modes": 1000,
+            "median_ours_minus_pylle_db": -2.701747976313584,
+            "p90_abs_db": 3.5704175411375765,
+            "median_abs_Dint_t_r": 2.1075238926982056,
+            "max_abs_Dint_t_r": 3.119217373552735
+          },
+          {
+            "mu_band": [
+              2000,
+              2500
+            ],
+            "n_modes": 1000,
+            "median_ours_minus_pylle_db": -4.974167724059356,
+            "p90_abs_db": 5.786112033407382,
+            "median_abs_Dint_t_r": 2.616415325426691,
+            "max_abs_Dint_t_r": 3.303004113335108
+          },
+          {
+            "mu_band": [
+              2500,
+              3000
+            ],
+            "n_modes": 1000,
+            "median_ours_minus_pylle_db": -5.5528993083393345,
+            "p90_abs_db": 6.007600833318968,
+            "median_abs_Dint_t_r": 1.8234886038137579,
+            "max_abs_Dint_t_r": 3.068619635192348
+          },
+          {
+            "mu_band": [
+              3000,
+              3300
+            ],
+            "n_modes": 602,
+            "median_ours_minus_pylle_db": -3.263514390017775,
+            "p90_abs_db": 4.899307960066114,
+            "median_abs_Dint_t_r": 0.6757022250466349,
+            "max_abs_Dint_t_r": 2.9325032674823337
+          }
+        ],
+        "picard_floor_hypothesis_test": {
+          "hypothesis": "the wing gap is pyLLE's shipped 1e-2 Picard tolerance leaving a broadband numerical floor above the true comb wings",
+          "test": "hold dt = 1 and tighten only the Picard pair to 1e-8 / 60; if the hypothesis holds, the |mu| >= 2000 wing gap must shrink toward 0",
+          "wing_median_gap_db_dt1_shipped_tol": -4.976589888179525,
+          "wing_median_gap_db_dt1_tight_tol": -4.974167724059356,
+          "change_db": 0.002422164120169157,
+          "mean_picard_iters_shipped": 2.0,
+          "mean_picard_iters_tight": 8.7232,
+          "verdict": "NOT_SUPPORTED"
+        }
+      },
+      "note": ""
+    },
+    {
+      "cid": "D6",
+      "name": "spectral_edge_dbc",
+      "class": "DIAGNOSTIC",
+      "quantity": "spectrum at mu = +/- mu_half; warn if above -100 dBc",
+      "verdict": "DIAGNOSTIC",
+      "data": {
+        "ours": {
+          "mu_minus_half_dbc": -82.10897726327335,
+          "mu_plus_half_dbc": -44.049364424967166,
+          "threshold_dbc": -100.0,
+          "contained": false,
+          "warning": "COMB NOT SPECTRALLY CONTAINED: grid edge at -44.0 dBc, above the -100 dBc containment threshold. Any observable that integrates the wings (line counts, band powers) is grid-limited here."
+        },
+        "pylle": {
+          "mu_minus_half_dbc": -82.5076582425441,
+          "mu_plus_half_dbc": -44.09224138736995,
+          "threshold_dbc": -100.0,
+          "contained": false,
+          "warning": "COMB NOT SPECTRALLY CONTAINED: grid edge at -44.1 dBc, above the -100 dBc containment threshold. Any observable that integrates the wings (line counts, band powers) is grid-limited here."
+        },
+        "mu_half": 3300,
+        "warning": "COMB NOT SPECTRALLY CONTAINED: grid edge at -44.0 dBc, above the -100 dBc containment threshold. Any observable that integrates the wings (line counts, band powers) is grid-limited here.",
+        "blue_dw_phase_match_mu": [
+          -3038,
+          -434,
+          404,
+          3239
+        ],
+        "blue_dw_margin_modes": 61,
+        "blue_dw_resolved": false
+      },
+      "note": "the committed run sits at -52.2 dBc: the comb is not contained"
+    },
+    {
+      "cid": "D7",
+      "name": "dint_phase_budget",
+      "class": "DIAGNOSTIC",
+      "quantity": "modes with |D_int|*t_r > pi and the smallest such |mu|",
+      "verdict": "DIAGNOSTIC",
+      "data": {
+        "n_modes_over_pi": 439,
+        "smallest_abs_mu_over_pi": 2021,
+        "max_abs_Dint_t_r": 3.303004113335108,
+        "note": "a per-round-trip phase above pi is under-resolved at dt = 1 in BOTH codes; it is a shared property of the discretization"
+      },
+      "note": ""
+    }
+  ],
+  "overall": "FAIL",
+  "overall_qualified": true,
+  "overall_qualification_reasons": [
+    "G1 intracavity_power_U_mean: tolerance UNDERIVED, demoted to DIAGNOSTIC (ours: convergence status NON_MONOTONE)",
+    "G3 band_limited_peak_power: tolerance UNDERIVED, demoted to DIAGNOSTIC (pyLLE: convergence status NON_MONOTONE)",
+    "G4 subbin_3db_span: tolerance UNDERIVED, demoted to DIAGNOSTIC (pyLLE: convergence status NON_MONOTONE)",
+    "G7 existence_edges: FAIL",
+    "G7 existence_edges: FAIL"
+  ],
+  "provenance": {
+    "git_commit": "f37b1c5fbddff35b79a2d797944a27604837aeac",
+    "git_dirty": true,
+    "argv": [
+      "--pylle-python",
+      "/opt/pylleroot/pylle-env/bin/python",
+      "--julia-bin",
+      "/opt/pylleroot/pylle-env/bin/julia",
+      "--vendored-kernel",
+      "third_party/pylle/ComputeLLE.jl",
+      "--mu-half",
+      "3300",
+      "--roundtrips",
+      "5000",
+      "--dw-start",
+      "16",
+      "--dw-end",
+      "30",
+      "--scan",
+      "3,5,8,16,30,40,50",
+      "--bisect-iters",
+      "5",
+      "--ours-levels",
+      "1,2,4,8,16",
+      "--pylle-levels",
+      "1,0.5,0.25,0.125"
+    ],
+    "command": "python -m validation.pylle_crosscheck_v2 --pylle-python /opt/pylleroot/pylle-env/bin/python --julia-bin /opt/pylleroot/pylle-env/bin/julia --vendored-kernel third_party/pylle/ComputeLLE.jl --mu-half 3300 --roundtrips 5000 --dw-start 16 --dw-end 30 --scan 3,5,8,16,30,40,50 --bisect-iters 5 --ours-levels 1,2,4,8,16 --pylle-levels 1,0.5,0.25,0.125",
+    "defaults_reproduce_this_run": true,
+    "timestamp_utc": "2026-08-16T20:05:19.896174+00:00",
+    "hostname": "vm",
+    "platform": "Linux-6.18.5-fc-v20-x86_64-with-glibc2.39",
+    "work_dir": "/tmp/xcheck2_dyh7da51",
+    "versions": {
+      "ours": {
+        "python": "3.11.15",
+        "numpy": "2.4.6",
+        "scipy": "1.17.1",
+        "jax": "0.10.2"
+      },
+      "pylle_env": {
+        "pyLLE": "4.1.2",
+        "python": "3.11.15",
+        "numpy": "1.26.4",
+        "scipy": "1.17.1",
+        "h5py": "3.16.0"
+      },
+      "julia": "julia version 1.10.4",
+      "julia_packages": "HDF5 0.17.3\nFFTW 1.10.0",
+      "julia_depot_path": "/opt/pylleroot/juliadepot"
+    },
+    "vendored_kernel": {
+      "path": "third_party/pylle/ComputeLLE.jl",
+      "sha256": "f400979c29ec158ed26edc27030b93e8c40b0cb4a1b8712917b1ff5c2eb599cf",
+      "integrity": {
+        "skipped": false,
+        "pylle_version": "4.1.2",
+        "upstream_sha256": "fc84520cff40909cfae4e68c5cc6fb0812b947d4070a73f520c854dd426d12fe",
+        "installed_sha256": null,
+        "vendored_sha256": "f400979c29ec158ed26edc27030b93e8c40b0cb4a1b8712917b1ff5c2eb599cf",
+        "patches": [
+          {
+            "name": "0001-restore-dt-cli.patch",
+            "sha256": "cd0a7a7920101ce143d084ba43bb1c0be98c838552707a9ff3bd113058b56eac"
+          },
+          {
+            "name": "0002-restore-tol-maxiter-cli.patch",
+            "sha256": "c619046b0f081b57866f47ab361a7571451df156f7060373d434e664d4ea3467"
+          },
+          {
+            "name": "0003-probe-final-step.patch",
+            "sha256": "7c6f9ae1ccc8c470dd67aaeef25f9092a65c3ab86f2cb78eb692fff30137dde4"
+          }
+        ]
+      },
+      "patches": [
+        {
+          "name": "0001-restore-dt-cli.patch",
+          "sha256": "cd0a7a7920101ce143d084ba43bb1c0be98c838552707a9ff3bd113058b56eac",
+          "lines": 20
+        },
+        {
+          "name": "0002-restore-tol-maxiter-cli.patch",
+          "sha256": "c619046b0f081b57866f47ab361a7571451df156f7060373d434e664d4ea3467",
+          "lines": 64
+        },
+        {
+          "name": "0003-probe-final-step.patch",
+          "sha256": "7c6f9ae1ccc8c470dd67aaeef25f9092a65c3ab86f2cb78eb692fff30137dde4",
+          "lines": 23
+        }
+      ]
+    },
+    "physical_parameters": {
+      "fsr_hz": 24600000000.0,
+      "pump_wavelength_m": 1.55e-06,
+      "pin_w": 0.214,
+      "kappa_i_rad_per_s": 30380000.0,
+      "kappa_c_rad_per_s": 121500000.0,
+      "n0": 1.87,
+      "n2_m2_per_w": 2.4e-19,
+      "effective_mode_area_m2": 3.344e-12,
+      "gamma_LLE_per_J_per_s": 1.029e+18
+    },
+    "derived_config": {
+      "filename": "pylle_crosscheck_config.yaml",
+      "sha256": "782afb017732d5ba5923a0804eb6406e73ccfcc387cc83dee149b9589ba4e10f",
+      "overrides": {
+        "dn_dT_per_k": 0.0,
+        "fsr_hz": 24451641068.182365
+      },
+      "override_reasons": {
+        "dn_dT_per_k": "pyLLE has no thermo-optic ODE; switching it off is how analytic_cw.py does it. delta_omega_eff == delta_omega exactly, which H6 measures.",
+        "fsr_hz": "Finding 9: pyLLE hardwires t_r = 2*pi/D1, so one D1 must serve both the co-moving frame and the timebase. The committed leaf is 24.6 GHz; the CSV fit gives 24.451641 GHz. config/sin_params.yaml is not modified."
+      },
+      "fsr_hz_config_leaf": 24600000000.0,
+      "fsr_hz_used": 24451641068.182365,
+      "fsr_rel_diff": 0.006030850886895715
+    },
+    "solver_flags": {
+      "symmetric_drive": false,
+      "edge_absorber": false,
+      "dealias_two_thirds": false,
+      "dispersion_validity_mask": false,
+      "fine_cadence_M": 1,
+      "noise_config": "NoiseConfig.all_off()",
+      "thermal_coupling": "lagged (decoupled: dn_dT_per_k = 0)",
+      "rng_key": "jax.random.PRNGKey(0), unused -- every noise channel is off"
+    },
+    "dispersion_csv": {
+      "path": "/home/user/soliton-control/config/pyLLE_dispersion_w4400_h800.csv",
+      "sha256": "a3cea56838809c4ea525355bf3dd8eb12a30bf51c0df9c21fecdb1e79b2a18e7",
+      "mu_min": -3261,
+      "mu_max": 5813,
+      "n_rows": 9075
+    },
+    "observable_definitions": {
+      "P_peak_w": "max|E_up|^2/t_r on a 32x zero-padded FFT (band-limited peak)",
+      "P_peak_raw_w": "max|E_j|^2/t_r on the native grid (legacy; sampling-phase biased)",
+      "peak_subsample_offset": "argmax position on the upsampled grid, in native samples, minus native argmax",
+      "S3_modes": "sub-bin 3 dB span: dB-linear interpolation of env(mu) across max(env)-3, pump bin excluded",
+      "S3_int_modes": "legacy integer 3 dB extent (mu of last index >= level minus first)",
+      "S3_n_runs": "number of disjoint index runs above the -3 dB level",
+      "mu_DW": "pedestal-subtracted power centroid over the fixed band DW_BAND",
+      "dw_power_dbc": "10*log10(sum p over DW band / max p over grid)",
+      "N60": "count of modes with spectrum_dbc >= -60 (DIAGNOSTIC ONLY, never a gate)",
+      "dN60_ddB": "N60(-60.5) - N60(-59.5), lines per dB (conditioning of N60)",
+      "N60_core": "N60 restricted to |mu| <= 1500",
+      "N60_mid": "N60 restricted to 1500 < |mu| <= 3000",
+      "N60_edge": "N60 restricted to |mu| > 3000",
+      "U_mean_w": "sum(|E_j|^2)/N/t_r  (Parseval-exact mean intracavity power)",
+      "comb_frac": "(sum|E_mu|^2 - |E_0|^2)/sum|E_mu|^2"
+    },
+    "observable_constants": {
+      "upsample_factor": 32,
+      "dw_band": [
+        -3200,
+        -2950
+      ],
+      "dbc_threshold": -60.0,
+      "pedestal_percentile": 10.0,
+      "gci_safety_factor": 1.25,
+      "order_window": [
+        0.5,
+        4.0
+      ]
+    },
+    "observable_source": "validation.convergence_lle.observables_v2",
+    "criteria_source": "validation.criteria",
+    "figure": {
+      "path": "/home/user/soliton-control/validation/results/pylle_crosscheck_v2.png",
+      "sha256": "750ae3f4d83a429af119a4b7ce0f6caac7943465679916cfe73ed8745889f273",
+      "generated": "in-run by this process"
+    },
+    "fields_npz": {
+      "path": "/home/user/soliton-control/validation/results/pylle_crosscheck_v2_fields.npz",
+      "sha256": "3526d0e90df08fbb21a3ded12662212fbfc9ece4839d7112fc98fa239c6ffce3"
+    },
+    "wall_clock_total_s": 1995.1470131874084
+  },
+  "conventions": {
+    "source": "validation/pylle_crosscheck.py module docstring, Findings 1-9, established from pyLLE 4.1.2 source and carried over verbatim by import; not re-derived here",
+    "finding_1_d_int_units": "rad/s on both sides, no 2*pi anywhere (ComputeLLE.jl:338, :88)",
+    "finding_2_field_map": "E_ours = conj(A_pyLLE)*sqrt(t_r)",
+    "finding_2_detuning_map": "delta_omega_pylle = -delta_omega_ours",
+    "finding_2b_dispersion_map": "D_int_pyLLE(mu) = D_int_ours(-mu); the conjugation forces the mirror on the INPUT",
+    "finding_3_power_map": "|A|^2 = |E|^2 / t_r",
+    "finding_4_drive_phase": "phi_pmp = -pi/2 makes pyLLE's drive real positive",
+    "finding_5_determinism": "pyLLE's Noise() call site is commented out; both codes get the same explicit sech seed",
+    "finding_6_rezero": "pyLLE re-zeros D_int at the domain centre; verified a no-op with the pump centred",
+    "finding_7_refit": "pyLLE spline-refits its dispersion CSV; its own D_int is fed back to BOTH codes so the refit cancels",
+    "finding_8_pump_reference": "sim['f_pmp'] pinned to the CSV mu=0 resonance, +7.11 FSR from c/lambda_nominal",
+    "finding_9_d1_timebase": "D1 sets the frame AND pyLLE's t_r; D1_csv is used and our fsr_hz follows it",
+    "dispersion_mirror_applied": true,
+    "dispersion_refit_max_rel_diff_vs_our_loader": 2.3217715595696414e-12,
+    "f_pmp_hz_used": 193589348987759.0,
+    "f_pmp_hz_nominal_c_over_lambda": 193414489032258.06,
+    "pump_offset_from_nominal_fsr": 7.108128272395834
+  },
+  "translation": {
+    "f_pmp_hz": 193589348987759.0,
+    "omega0_rad_per_s": 1216357753186348.8,
+    "pump_wavelength_m_nominal": 1.55e-06,
+    "t_r_s": 4.089705051744962e-11,
+    "Pin_w": 0.214,
+    "Qi": 40038109.05814183,
+    "Qc": 10011174.923344433,
+    "gamma_nlse_per_w_per_m": 0.2909331057499423,
+    "n_g": 2.0851321203150524,
+    "L_cav_m": 0.005844562637456039,
+    "R_m": 0.0009301910339613336,
+    "D1_manual_rad_per_s": 153634191896.0324,
+    "phi_pmp_rad": -1.5707963267948966,
+    "n0": 1.87,
+    "n2_m2_per_w": 2.4e-19,
+    "Aeff_m2": 3.344e-12
+  },
+  "translation_round_trip": {
+    "fsr_hz": {
+      "ours": 24600000000.0,
+      "round_trip": 24600000000.0,
+      "rel_diff": 0.0
+    },
+    "pump_wavelength_m": {
+      "ours": 1.55e-06,
+      "round_trip": 1.55e-06,
+      "rel_diff": 0.0
+    },
+    "pin_w": {
+      "ours": 0.214,
+      "round_trip": 0.214,
+      "rel_diff": 0.0
+    },
+    "kappa_i_rad_per_s": {
+      "ours": 30380000.0,
+      "round_trip": 30380000.0,
+      "rel_diff": 0.0
+    },
+    "kappa_c_rad_per_s": {
+      "ours": 121500000.0,
+      "round_trip": 121500000.00000001,
+      "rel_diff": 1.226433020069766e-16
+    },
+    "n0": {
+      "ours": 1.87,
+      "round_trip": 1.87,
+      "rel_diff": 0.0
+    },
+    "n2_m2_per_w": {
+      "ours": 2.4e-19,
+      "round_trip": 2.4e-19,
+      "rel_diff": 0.0
+    },
+    "effective_mode_area_m2": {
+      "ours": 3.344e-12,
+      "round_trip": 3.344e-12,
+      "rel_diff": 0.0
+    },
+    "gamma_LLE_per_J_per_s": {
+      "ours": 1.029e+18,
+      "round_trip": 1.029e+18,
+      "rel_diff": 0.0
+    },
+    "_worst_rel_diff": 1.226433020069766e-16
+  },
+  "frame_and_timebase": {
+    "D1_rad_per_s": 153634191896.0324,
+    "fsr_hz_used": 24451641068.182365,
+    "fsr_hz_config_leaf": 24600000000.0,
+    "t_r_s": 4.089705051744962e-11,
+    "kappa_rad_per_s": 151880000.0,
+    "kappa_t_r": 0.006211444032590249
+  },
+  "discretization": {
+    "n_modes": 6601,
+    "mu_min": -3300,
+    "mu_max": 3300,
+    "n_roundtrips_main": 5000,
+    "n_roundtrips_scan": 2000,
+    "ours_levels_n_substeps": [
+      1,
+      2,
+      4,
+      8,
+      16
+    ],
+    "pylle_levels_dt": [
+      1.0,
+      0.5,
+      0.25,
+      0.125
+    ],
+    "pylle_picard_shipped": {
+      "tol": 0.01,
+      "maxiter": 10
+    },
+    "pylle_picard_tight": {
+      "tol": 1e-08,
+      "maxiter": 60
+    },
+    "num_probe": 200,
+    "max_abs_Dint_t_r_rad": 3.303004113335108
+  },
+  "initialization": {
+    "seed_kind": "deterministic sech DKS ansatz on the lower CW branch",
+    "seed_amplitude": "A^2 = 2*delta_omega/gamma_LLE",
+    "seed_width_theta": "w = sqrt(|D2|/(2*delta_omega))",
+    "local_D2_rad_per_s2": 50011.53497093499,
+    "seed_delta_omega_rad_per_s": 2430080000.0,
+    "seed_sha256": "4a3c9805776a381a44d0ff90527ff04f97e5fdc00c1ee8edd3283c944c15c823",
+    "randomness": "none on either side (Finding 5)"
+  },
+  "detuning": {
+    "ramp_start_over_kappa": 16.0,
+    "ramp_end_over_kappa": 30.0,
+    "rule": "numpy.linspace(dw_start, dw_end, n_roundtrips), one value per round trip; pyLLE is given domega_init/-end with the sign flipped and builds the same linear ramp internally",
+    "final_delta_omega_ours_rad_per_s": 4556400000.0,
+    "final_delta_omega_pylle_rad_per_s": -4556400000.0,
+    "final_delta_omega_pylle_sign_flipped": 4556400000.0,
+    "endpoint_match_rel": 0.0,
+    "endpoint_note": "patch 0003 makes pyLLE's last probe the true end-of-run state; upstream returned round trip 4976 of 5000"
+  },
+  "ladders": {
+    "ours": [
+      {
+        "level": "n1",
+        "n_substeps": 1,
+        "h": 1.0,
+        "wall_s": 14.120500326156616,
+        "obs": {
+          "P_peak_w": 233.92658914635848,
+          "P_peak_raw_w": 230.11009266858082,
+          "peak_subsample_offset": -0.28125,
+          "S3_modes": 444.78204721451345,
+          "S3_int_modes": 443,
+          "S3_n_runs": 3,
+          "mu_DW": -3074.9846327195874,
+          "dw_power_dbc": -29.788915857068755,
+          "N60": 3293,
+          "dN60_ddB": 85,
+          "N60_core": 3001,
+          "N60_mid": 255,
+          "N60_edge": 37,
+          "U_mean_w": 0.19285584658353186,
+          "comb_frac": 0.8570113746515999
+        },
+        "delta_omega_eff_max_rel": 0.0
+      },
+      {
+        "level": "n2",
+        "n_substeps": 2,
+        "h": 0.5,
+        "wall_s": 17.26520872116089,
+        "obs": {
+          "P_peak_w": 233.93558698981394,
+          "P_peak_raw_w": 233.93558698981394,
+          "peak_subsample_offset": 0.0,
+          "S3_modes": 445.0197301987924,
+          "S3_int_modes": 445,
+          "S3_n_runs": 3,
+          "mu_DW": -3075.1195482197236,
+          "dw_power_dbc": -24.012527515645022,
+          "N60": 3357,
+          "dN60_ddB": 96,
+          "N60_core": 3001,
+          "N60_mid": 255,
+          "N60_edge": 101,
+          "U_mean_w": 0.1915641901393591,
+          "comb_frac": 0.854963003161942
+        },
+        "delta_omega_eff_max_rel": 0.0
+      },
+      {
+        "level": "n4",
+        "n_substeps": 4,
+        "h": 0.25,
+        "wall_s": 26.290330410003662,
+        "obs": {
+          "P_peak_w": 233.13751686800728,
+          "P_peak_raw_w": 230.6146452514656,
+          "peak_subsample_offset": -0.21875,
+          "S3_modes": 445.0463225963813,
+          "S3_int_modes": 445,
+          "S3_n_runs": 3,
+          "mu_DW": -3075.228565641494,
+          "dw_power_dbc": -23.02747319186696,
+          "N60": 3342,
+          "dN60_ddB": 96,
+          "N60_core": 3001,
+          "N60_mid": 250,
+          "N60_edge": 91,
+          "U_mean_w": 0.19131377091426052,
+          "comb_frac": 0.8540871212979678
+        },
+        "delta_omega_eff_max_rel": 0.0
+      },
+      {
+        "level": "n8",
+        "n_substeps": 8,
+        "h": 0.125,
+        "wall_s": 44.94554352760315,
+        "obs": {
+          "P_peak_w": 232.87518296913592,
+          "P_peak_raw_w": 228.89860460153218,
+          "peak_subsample_offset": -0.28125,
+          "S3_modes": 445.0388610754911,
+          "S3_int_modes": 445,
+          "S3_n_runs": 3,
+          "mu_DW": -3075.2468985147893,
+          "dw_power_dbc": -22.729968434082032,
+          "N60": 3330,
+          "dN60_ddB": 93,
+          "N60_core": 3001,
+          "N60_mid": 248,
+          "N60_edge": 81,
+          "U_mean_w": 0.19128716323892622,
+          "comb_frac": 0.8537045830800237
+        },
+        "delta_omega_eff_max_rel": 0.0
+      },
+      {
+        "level": "n16",
+        "n_substeps": 16,
+        "h": 0.0625,
+        "wall_s": 81.57540726661682,
+        "obs": {
+          "P_peak_w": 232.82219575226196,
+          "P_peak_raw_w": 228.42337794850388,
+          "peak_subsample_offset": -0.28125,
+          "S3_modes": 445.0363357389357,
+          "S3_int_modes": 445,
+          "S3_n_runs": 3,
+          "mu_DW": -3075.2501757214577,
+          "dw_power_dbc": -22.653512002145767,
+          "N60": 3324,
+          "dN60_ddB": 92,
+          "N60_core": 3001,
+          "N60_mid": 246,
+          "N60_edge": 77,
+          "U_mean_w": 0.19129902946943458,
+          "comb_frac": 0.8535263919222681
+        },
+        "delta_omega_eff_max_rel": 0.0
+      }
+    ],
+    "pylle": [
+      {
+        "level": "dt1_shipped",
+        "dt": 1.0,
+        "h": 1.0,
+        "tol": 0.01,
+        "maxiter": 10,
+        "wall_s": 22.718668937683105,
+        "mean_picard_iters": 2.0,
+        "max_picard_iters": 2.0,
+        "picard_failure_count": 0.0,
+        "detuning_pylle_final": -4556400000.0,
+        "seed_sha256_pylle_convention": "9f5bdef682252ec1500969337bb6997809c4e04e9f87f8917cdd14bfcecee2d1",
+        "pump_freq_hz_located_by_pylle": 193589348987759.0,
+        "pump_mu_located_by_pylle": 0,
+        "obs": {
+          "P_peak_w": 239.9660009480438,
+          "P_peak_raw_w": 231.60956720769366,
+          "peak_subsample_offset": 0.375,
+          "S3_modes": 445.4403497036744,
+          "S3_int_modes": 444,
+          "S3_n_runs": 3,
+          "mu_DW": -3074.5562179725275,
+          "dw_power_dbc": -22.471170889658385,
+          "N60": 3528,
+          "dN60_ddB": 106,
+          "N60_core": 3001,
+          "N60_mid": 477,
+          "N60_edge": 50,
+          "U_mean_w": 0.19212418424131447,
+          "comb_frac": 0.8562305855746273
+        }
+      },
+      {
+        "level": "dt0.5_shipped",
+        "dt": 0.5,
+        "h": 0.5,
+        "tol": 0.01,
+        "maxiter": 10,
+        "wall_s": 35.11655330657959,
+        "mean_picard_iters": 2.0,
+        "max_picard_iters": 2.0,
+        "picard_failure_count": 0.0,
+        "detuning_pylle_final": -4556400000.0,
+        "seed_sha256_pylle_convention": "9f5bdef682252ec1500969337bb6997809c4e04e9f87f8917cdd14bfcecee2d1",
+        "pump_freq_hz_located_by_pylle": 193589348987759.0,
+        "pump_mu_located_by_pylle": 0,
+        "obs": {
+          "P_peak_w": 236.10695733744564,
+          "P_peak_raw_w": 224.9654956212671,
+          "peak_subsample_offset": 0.46875,
+          "S3_modes": 445.0780426211742,
+          "S3_int_modes": 444,
+          "S3_n_runs": 3,
+          "mu_DW": -3074.9413466424753,
+          "dw_power_dbc": -21.830769000822666,
+          "N60": 3346,
+          "dN60_ddB": 88,
+          "N60_core": 3001,
+          "N60_mid": 293,
+          "N60_edge": 52,
+          "U_mean_w": 0.19287087060707528,
+          "comb_frac": 0.8556847285905671
+        }
+      },
+      {
+        "level": "dt0.25_shipped",
+        "dt": 0.25,
+        "h": 0.25,
+        "tol": 0.01,
+        "maxiter": 10,
+        "wall_s": 61.47882628440857,
+        "mean_picard_iters": 2.0,
+        "max_picard_iters": 2.0,
+        "picard_failure_count": 0.0,
+        "detuning_pylle_final": -4556400000.0,
+        "seed_sha256_pylle_convention": "9f5bdef682252ec1500969337bb6997809c4e04e9f87f8917cdd14bfcecee2d1",
+        "pump_freq_hz_located_by_pylle": 193589348987759.0,
+        "pump_mu_located_by_pylle": 0,
+        "obs": {
+          "P_peak_w": 236.46063372823946,
+          "P_peak_raw_w": 233.50026295434796,
+          "peak_subsample_offset": 0.21875,
+          "S3_modes": 445.0590168424657,
+          "S3_int_modes": 445,
+          "S3_n_runs": 3,
+          "mu_DW": -3075.093320228138,
+          "dw_power_dbc": -22.03767694505093,
+          "N60": 3360,
+          "dN60_ddB": 96,
+          "N60_core": 3001,
+          "N60_mid": 267,
+          "N60_edge": 92,
+          "U_mean_w": 0.19310069669698213,
+          "comb_frac": 0.8552264770125086
+        }
+      },
+      {
+        "level": "dt0.125_shipped",
+        "dt": 0.125,
+        "h": 0.125,
+        "tol": 0.01,
+        "maxiter": 10,
+        "wall_s": 81.84345579147339,
+        "mean_picard_iters": 1.0,
+        "max_picard_iters": 1.0,
+        "picard_failure_count": 0.0,
+        "detuning_pylle_final": -4556400000.0,
+        "seed_sha256_pylle_convention": "9f5bdef682252ec1500969337bb6997809c4e04e9f87f8917cdd14bfcecee2d1",
+        "pump_freq_hz_located_by_pylle": 193589348987759.0,
+        "pump_mu_located_by_pylle": 0,
+        "obs": {
+          "P_peak_w": 235.9929252939844,
+          "P_peak_raw_w": 235.58967690944033,
+          "peak_subsample_offset": 0.09375,
+          "S3_modes": 445.1654104469118,
+          "S3_int_modes": 445,
+          "S3_n_runs": 3,
+          "mu_DW": -3074.2722165223604,
+          "dw_power_dbc": -25.162092374557886,
+          "N60": 3345,
+          "dN60_ddB": 97,
+          "N60_core": 3001,
+          "N60_mid": 252,
+          "N60_edge": 92,
+          "U_mean_w": 0.19317343526741307,
+          "comb_frac": 0.8549539984595301
+        }
+      },
+      {
+        "level": "dt1_tight",
+        "dt": 1.0,
+        "h": 1.0,
+        "tol": 1e-08,
+        "maxiter": 60,
+        "wall_s": 49.61969232559204,
+        "mean_picard_iters": 8.7232,
+        "max_picard_iters": 10.0,
+        "picard_failure_count": 0.0,
+        "detuning_pylle_final": -4556400000.0,
+        "seed_sha256_pylle_convention": "9f5bdef682252ec1500969337bb6997809c4e04e9f87f8917cdd14bfcecee2d1",
+        "pump_freq_hz_located_by_pylle": 193589348987759.0,
+        "pump_mu_located_by_pylle": 0,
+        "obs": {
+          "P_peak_w": 240.1383848626209,
+          "P_peak_raw_w": 228.62953347748103,
+          "peak_subsample_offset": 0.4375,
+          "S3_modes": 445.31642293510436,
+          "S3_int_modes": 445,
+          "S3_n_runs": 3,
+          "mu_DW": -3074.6577159263975,
+          "dw_power_dbc": -20.05404204222387,
+          "N60": 3541,
+          "dN60_ddB": 104,
+          "N60_core": 3001,
+          "N60_mid": 478,
+          "N60_edge": 62,
+          "U_mean_w": 0.1921921164946048,
+          "comb_frac": 0.8562467864043387
+        }
+      },
+      {
+        "level": "dt0.5_tight",
+        "dt": 0.5,
+        "h": 0.5,
+        "tol": 1e-08,
+        "maxiter": 60,
+        "wall_s": 64.23464560508728,
+        "mean_picard_iters": 5.4987,
+        "max_picard_iters": 6.0,
+        "picard_failure_count": 0.0,
+        "detuning_pylle_final": -4556400000.0,
+        "seed_sha256_pylle_convention": "9f5bdef682252ec1500969337bb6997809c4e04e9f87f8917cdd14bfcecee2d1",
+        "pump_freq_hz_located_by_pylle": 193589348987759.0,
+        "pump_mu_located_by_pylle": 0,
+        "obs": {
+          "P_peak_w": 237.44621935576305,
+          "P_peak_raw_w": 234.99138051173847,
+          "peak_subsample_offset": 0.21875,
+          "S3_modes": 445.1277683012472,
+          "S3_int_modes": 445,
+          "S3_n_runs": 3,
+          "mu_DW": -3075.045050363959,
+          "dw_power_dbc": -21.63167533872941,
+          "N60": 3409,
+          "dN60_ddB": 100,
+          "N60_core": 3001,
+          "N60_mid": 304,
+          "N60_edge": 104,
+          "U_mean_w": 0.1928612763843674,
+          "comb_frac": 0.8557089983711238
+        }
+      },
+      {
+        "level": "dt0.25_tight",
+        "dt": 0.25,
+        "h": 0.25,
+        "tol": 1e-08,
+        "maxiter": 60,
+        "wall_s": 94.1323938369751,
+        "mean_picard_iters": 4.0,
+        "max_picard_iters": 4.0,
+        "picard_failure_count": 0.0,
+        "detuning_pylle_final": -4556400000.0,
+        "seed_sha256_pylle_convention": "9f5bdef682252ec1500969337bb6997809c4e04e9f87f8917cdd14bfcecee2d1",
+        "pump_freq_hz_located_by_pylle": 193589348987759.0,
+        "pump_mu_located_by_pylle": 0,
+        "obs": {
+          "P_peak_w": 235.43841307688334,
+          "P_peak_raw_w": 227.06787975857858,
+          "peak_subsample_offset": -0.40625,
+          "S3_modes": 445.0122758135242,
+          "S3_int_modes": 444,
+          "S3_n_runs": 3,
+          "mu_DW": -3075.2278064280135,
+          "dw_power_dbc": -22.38818185277774,
+          "N60": 3318,
+          "dN60_ddB": 89,
+          "N60_core": 3001,
+          "N60_mid": 260,
+          "N60_edge": 57,
+          "U_mean_w": 0.19310288805228293,
+          "comb_frac": 0.8551852822713243
+        }
+      },
+      {
+        "level": "dt0.125_tight",
+        "dt": 0.125,
+        "h": 0.125,
+        "tol": 1e-08,
+        "maxiter": 60,
+        "wall_s": 169.82220840454102,
+        "mean_picard_iters": 3.703325,
+        "max_picard_iters": 4.0,
+        "picard_failure_count": 0.0,
+        "detuning_pylle_final": -4556400000.0,
+        "seed_sha256_pylle_convention": "9f5bdef682252ec1500969337bb6997809c4e04e9f87f8917cdd14bfcecee2d1",
+        "pump_freq_hz_located_by_pylle": 193589348987759.0,
+        "pump_mu_located_by_pylle": 0,
+        "obs": {
+          "P_peak_w": 235.54864584008817,
+          "P_peak_raw_w": 230.64186371291083,
+          "peak_subsample_offset": -0.3125,
+          "S3_modes": 445.0270570020642,
+          "S3_int_modes": 444,
+          "S3_n_runs": 3,
+          "mu_DW": -3075.2479455254615,
+          "dw_power_dbc": -22.566846672107722,
+          "N60": 3329,
+          "dN60_ddB": 91,
+          "N60_core": 3001,
+          "N60_mid": 253,
+          "N60_edge": 75,
+          "U_mean_w": 0.19320352938132437,
+          "comb_frac": 0.8548918872469962
+        }
+      }
+    ]
+  },
+  "convergence": {
+    "ours": {
+      "P_peak_w": {
+        "levels": [
+          233.92658914635848,
+          233.93558698981394,
+          233.13751686800728,
+          232.87518296913592,
+          232.82219575226196
+        ],
+        "h": [
+          1.0,
+          0.5,
+          0.25,
+          0.125,
+          0.0625
+        ],
+        "observed_order": 2.3076879874929843,
+        "extrapolated": 232.8087842898721,
+        "gci": 7.200900102826072e-05,
+        "U_obs": 0.0002275866212100351,
+        "status": "OK"
+      },
+      "P_peak_raw_w": {
+        "levels": [
+          230.11009266858082,
+          233.93558698981394,
+          230.6146452514656,
+          228.89860460153218,
+          228.42337794850388
+        ],
+        "h": [
+          1.0,
+          0.5,
+          0.25,
+          0.125,
+          0.0625
+        ],
+        "observed_order": 1.8523960712130334,
+        "extrapolated": 228.24136809665518,
+        "gci": 0.0009968057793735881,
+        "U_obs": 0.00208046416831922,
+        "status": "OK"
+      },
+      "S3_modes": {
+        "levels": [
+          444.78204721451345,
+          445.0197301987924,
+          445.0463225963813,
+          445.0388610754911,
+          445.0363357389357
+        ],
+        "h": [
+          1.0,
+          0.5,
+          0.25,
+          0.125,
+          0.0625
+        ],
+        "observed_order": 1.5629940557648099,
+        "extrapolated": 445.03504378460707,
+        "gci": 3.6287994245204546e-06,
+        "U_obs": 5.6744502698712085e-06,
+        "status": "OK"
+      },
+      "mu_DW": {
+        "levels": [
+          -3074.9846327195874,
+          -3075.1195482197236,
+          -3075.228565641494,
+          -3075.2468985147893,
+          -3075.2501757214577
+        ],
+        "h": [
+          1.0,
+          0.5,
+          0.25,
+          0.125,
+          0.0625
+        ],
+        "observed_order": 2.4838943553487893,
+        "extrapolated": -3075.2508890796776,
+        "gci": 2.899593584331662e-07,
+        "U_obs": 1.0656715652745582e-06,
+        "status": "OK"
+      },
+      "dw_power_dbc": {
+        "levels": [
+          -29.788915857068755,
+          -24.012527515645022,
+          -23.02747319186696,
+          -22.729968434082032,
+          -22.653512002145767
+        ],
+        "h": [
+          1.0,
+          0.5,
+          0.25,
+          0.125,
+          0.0625
+        ],
+        "observed_order": 1.9602029613560616,
+        "extrapolated": -22.627067169496698,
+        "gci": 0.0014609069997325687,
+        "U_obs": 0.0033750365916341268,
+        "status": "OK"
+      },
+      "U_mean_w": {
+        "levels": [
+          0.19285584658353186,
+          0.1915641901393591,
+          0.19131377091426052,
+          0.19128716323892622,
+          0.19129902946943458
+        ],
+        "h": [
+          1.0,
+          0.5,
+          0.25,
+          0.125,
+          0.0625
+        ],
+        "observed_order": null,
+        "extrapolated": null,
+        "gci": null,
+        "U_obs": 0.00013908944236725276,
+        "status": "NON_MONOTONE"
+      },
+      "comb_frac": {
+        "levels": [
+          0.8570113746515999,
+          0.854963003161942,
+          0.8540871212979678,
+          0.8537045830800237,
+          0.8535263919222681
+        ],
+        "h": [
+          1.0,
+          0.5,
+          0.25,
+          0.125,
+          0.0625
+        ],
+        "observed_order": 1.1021781403248607,
+        "extrapolated": 0.8533710087781553,
+        "gci": 0.00022760197867405528,
+        "U_obs": 0.00022760197867405528,
+        "status": "OK"
+      }
+    },
+    "pylle_shipped_picard": {
+      "P_peak_w": {
+        "levels": [
+          239.9660009480438,
+          236.10695733744564,
+          236.46063372823946,
+          235.9929252939844
+        ],
+        "h": [
+          1.0,
+          0.5,
+          0.25,
+          0.125
+        ],
+        "observed_order": null,
+        "extrapolated": null,
+        "gci": null,
+        "U_obs": 0.0019818748111724888,
+        "status": "NON_MONOTONE"
+      },
+      "P_peak_raw_w": {
+        "levels": [
+          231.60956720769366,
+          224.9654956212671,
+          233.50026295434796,
+          235.58967690944033
+        ],
+        "h": [
+          1.0,
+          0.5,
+          0.25,
+          0.125
+        ],
+        "observed_order": 2.0302534766333893,
+        "extrapolated": 236.26700993056588,
+        "gci": 0.003583514586550842,
+        "U_obs": 0.008868868884673288,
+        "status": "OK"
+      },
+      "S3_modes": {
+        "levels": [
+          445.4403497036744,
+          445.0780426211742,
+          445.0590168424657,
+          445.1654104469118
+        ],
+        "h": [
+          1.0,
+          0.5,
+          0.25,
+          0.125
+        ],
+        "observed_order": null,
+        "extrapolated": null,
+        "gci": null,
+        "U_obs": 0.0002389979139197804,
+        "status": "NON_MONOTONE"
+      },
+      "mu_DW": {
+        "levels": [
+          -3074.5562179725275,
+          -3074.9413466424753,
+          -3075.093320228138,
+          -3074.2722165223604
+        ],
+        "h": [
+          1.0,
+          0.5,
+          0.25,
+          0.125
+        ],
+        "observed_order": null,
+        "extrapolated": null,
+        "gci": null,
+        "U_obs": 0.00026708880930085557,
+        "status": "NON_MONOTONE"
+      },
+      "dw_power_dbc": {
+        "levels": [
+          -22.471170889658385,
+          -21.830769000822666,
+          -22.03767694505093,
+          -25.162092374557886
+        ],
+        "h": [
+          1.0,
+          0.5,
+          0.25,
+          0.125
+        ],
+        "observed_order": -3.916525346671113,
+        "extrapolated": null,
+        "gci": null,
+        "U_obs": 0.1241715268745354,
+        "status": "ORDER_OUT_OF_RANGE"
+      },
+      "U_mean_w": {
+        "levels": [
+          0.19212418424131447,
+          0.19287087060707528,
+          0.19310069669698213,
+          0.19317343526741307
+        ],
+        "h": [
+          1.0,
+          0.5,
+          0.25,
+          0.125
+        ],
+        "observed_order": 1.6597501051832444,
+        "extrapolated": 0.19320711648948588,
+        "gci": 0.00021790878284396104,
+        "U_obs": 0.00037654541024364027,
+        "status": "OK"
+      },
+      "comb_frac": {
+        "levels": [
+          0.8562305855746273,
+          0.8556847285905671,
+          0.8552264770125086,
+          0.8549539984595301
+        ],
+        "h": [
+          1.0,
+          0.5,
+          0.25,
+          0.125
+        ],
+        "observed_order": 0.7499971703221051,
+        "extrapolated": 0.8545543464551484,
+        "gci": 0.0005845912639137241,
+        "U_obs": 0.0005845912639137241,
+        "status": "OK"
+      }
+    },
+    "pylle_tight_picard": {
+      "P_peak_w": {
+        "levels": [
+          240.1383848626209,
+          237.44621935576305,
+          235.43841307688334,
+          235.54864584008817
+        ],
+        "h": [
+          1.0,
+          0.5,
+          0.25,
+          0.125
+        ],
+        "observed_order": null,
+        "extrapolated": null,
+        "gci": null,
+        "U_obs": 0.008523955940051526,
+        "status": "NON_MONOTONE"
+      },
+      "P_peak_raw_w": {
+        "levels": [
+          228.62953347748103,
+          234.99138051173847,
+          227.06787975857858,
+          230.64186371291083
+        ],
+        "h": [
+          1.0,
+          0.5,
+          0.25,
+          0.125
+        ],
+        "observed_order": null,
+        "extrapolated": null,
+        "gci": null,
+        "U_obs": 0.034354130796578126,
+        "status": "NON_MONOTONE"
+      },
+      "S3_modes": {
+        "levels": [
+          445.31642293510436,
+          445.1277683012472,
+          445.0122758135242,
+          445.0270570020642
+        ],
+        "h": [
+          1.0,
+          0.5,
+          0.25,
+          0.125
+        ],
+        "observed_order": null,
+        "extrapolated": null,
+        "gci": null,
+        "U_obs": 0.000259517901003704,
+        "status": "NON_MONOTONE"
+      },
+      "mu_DW": {
+        "levels": [
+          -3074.6577159263975,
+          -3075.045050363959,
+          -3075.2278064280135,
+          -3075.2479455254615
+        ],
+        "h": [
+          1.0,
+          0.5,
+          0.25,
+          0.125
+        ],
+        "observed_order": 3.1818483430235815,
+        "extrapolated": -3075.2504396271192,
+        "gci": 1.0137798964129064e-06,
+        "U_obs": 6.548771937986937e-06,
+        "status": "OK"
+      },
+      "dw_power_dbc": {
+        "levels": [
+          -20.05404204222387,
+          -21.63167533872941,
+          -22.38818185277774,
+          -22.566846672107722
+        ],
+        "h": [
+          1.0,
+          0.5,
+          0.25,
+          0.125
+        ],
+        "observed_order": 2.082096922068318,
+        "extrapolated": -22.622088649206265,
+        "gci": 0.00305243571643424,
+        "U_obs": 0.007917137113835586,
+        "status": "OK"
+      },
+      "U_mean_w": {
+        "levels": [
+          0.1921921164946048,
+          0.1928612763843674,
+          0.19310288805228293,
+          0.19320352938132437
+        ],
+        "h": [
+          1.0,
+          0.5,
+          0.25,
+          0.125
+        ],
+        "observed_order": 1.2634672477175313,
+        "extrapolated": 0.19327537908525588,
+        "gci": 0.00046468479502901044,
+        "U_obs": 0.0005209083362178667,
+        "status": "OK"
+      },
+      "comb_frac": {
+        "levels": [
+          0.8562467864043387,
+          0.8557089983711238,
+          0.8551852822713243,
+          0.8548918872469962
+        ],
+        "h": [
+          1.0,
+          0.5,
+          0.25,
+          0.125
+        ],
+        "observed_order": 0.8359405514022231,
+        "extrapolated": 0.8545181453298731,
+        "gci": 0.0005467144249153861,
+        "U_obs": 0.0005467144249153861,
+        "status": "OK"
+      }
+    }
+  },
+  "containment": {
+    "U_mean_w": {
+      "ours_limit": null,
+      "ours_U": 0.00013908944236725276,
+      "ours_p": null,
+      "ours_status": "NON_MONOTONE",
+      "pylle_limit": 0.19327537908525588,
+      "pylle_U": 0.0005209083362178667,
+      "pylle_p": 1.2634672477175313,
+      "pylle_status": "OK",
+      "limit_gap": null,
+      "band": null,
+      "coverage_factor": 2.0,
+      "kind": "relative",
+      "verdict": "INDETERMINATE",
+      "reason": "ours: NON_MONOTONE"
+    },
+    "comb_frac": {
+      "ours_limit": 0.8533710087781553,
+      "ours_U": 0.00022760197867405528,
+      "ours_p": 1.1021781403248607,
+      "ours_status": "OK",
+      "pylle_limit": 0.8545181453298731,
+      "pylle_U": 0.0005467144249153861,
+      "pylle_p": 0.8359405514022231,
+      "pylle_status": "OK",
+      "limit_gap": 0.0013424367381631168,
+      "band": 0.0011843974385431714,
+      "coverage_factor": 2.0,
+      "kind": "relative",
+      "verdict": "SEPARATED",
+      "reason": "both ladders converged (p_ours=1.102, p_pylle=0.836) but the limits differ by 0.001342 against a combined band of 0.001184",
+      "ours_U_in_comparison_units": 0.00022760197867405528,
+      "pylle_U_in_comparison_units": 0.0005467144249153861
+    },
+    "P_peak_w": {
+      "ours_limit": 232.8087842898721,
+      "ours_U": 0.0002275866212100351,
+      "ours_p": 2.3076879874929843,
+      "ours_status": "OK",
+      "pylle_limit": null,
+      "pylle_U": 0.008523955940051526,
+      "pylle_p": null,
+      "pylle_status": "NON_MONOTONE",
+      "limit_gap": null,
+      "band": null,
+      "coverage_factor": 2.0,
+      "kind": "relative",
+      "verdict": "INDETERMINATE",
+      "reason": "pylle: NON_MONOTONE"
+    },
+    "S3_modes": {
+      "ours_limit": 445.03504378460707,
+      "ours_U": 5.6744502698712085e-06,
+      "ours_p": 1.5629940557648099,
+      "ours_status": "OK",
+      "pylle_limit": null,
+      "pylle_U": 0.000259517901003704,
+      "pylle_p": null,
+      "pylle_status": "NON_MONOTONE",
+      "limit_gap": null,
+      "band": null,
+      "coverage_factor": 2.0,
+      "kind": "relative",
+      "verdict": "INDETERMINATE",
+      "reason": "pylle: NON_MONOTONE"
+    },
+    "mu_DW": {
+      "ours_limit": -3075.2508890796776,
+      "ours_U": 1.0656715652745582e-06,
+      "ours_p": 2.4838943553487893,
+      "ours_status": "OK",
+      "pylle_limit": -3075.2504396271192,
+      "pylle_U": 6.548771937986937e-06,
+      "pylle_p": 3.1818483430235815,
+      "pylle_status": "OK",
+      "limit_gap": 0.0004494525583140785,
+      "band": 0.040808038052646316,
+      "coverage_factor": 2.0,
+      "kind": "absolute",
+      "verdict": "CONTAINED",
+      "reason": null,
+      "ours_U_in_comparison_units": 0.0032772074285775167,
+      "pylle_U_in_comparison_units": 0.02013911378131207
+    },
+    "dw_power_dbc": {
+      "ours_limit": -22.627067169496698,
+      "ours_U": 0.0033750365916341268,
+      "ours_p": 1.9602029613560616,
+      "ours_status": "OK",
+      "pylle_limit": -22.622088649206265,
+      "pylle_U": 0.007917137113835586,
+      "pylle_p": 2.082096922068318,
+      "pylle_status": "OK",
+      "limit_gap": 0.00022002499277254682,
+      "band": 0.01721301043677627,
+      "coverage_factor": 2.0,
+      "kind": "relative",
+      "verdict": "CONTAINED",
+      "reason": null,
+      "ours_U_in_comparison_units": 0.0033750365916341268,
+      "pylle_U_in_comparison_units": 0.007917137113835586
+    }
+  },
+  "containment_vs_shipped_picard_ladder": {
+    "U_mean_w": {
+      "ours_limit": null,
+      "ours_U": 0.00013908944236725276,
+      "ours_p": null,
+      "ours_status": "NON_MONOTONE",
+      "pylle_limit": 0.19320711648948588,
+      "pylle_U": 0.00037654541024364027,
+      "pylle_p": 1.6597501051832444,
+      "pylle_status": "OK",
+      "limit_gap": null,
+      "band": null,
+      "coverage_factor": 2.0,
+      "kind": "relative",
+      "verdict": "INDETERMINATE",
+      "reason": "ours: NON_MONOTONE"
+    },
+    "comb_frac": {
+      "ours_limit": 0.8533710087781553,
+      "ours_U": 0.00022760197867405528,
+      "ours_p": 1.1021781403248607,
+      "ours_status": "OK",
+      "pylle_limit": 0.8545543464551484,
+      "pylle_U": 0.0005845912639137241,
+      "pylle_p": 0.7499971703221051,
+      "pylle_status": "OK",
+      "limit_gap": 0.0013847424472203387,
+      "band": 0.001254670644496938,
+      "coverage_factor": 2.0,
+      "kind": "relative",
+      "verdict": "SEPARATED",
+      "reason": "both ladders converged (p_ours=1.102, p_pylle=0.750) but the limits differ by 0.001385 against a combined band of 0.001255",
+      "ours_U_in_comparison_units": 0.00022760197867405528,
+      "pylle_U_in_comparison_units": 0.0005845912639137241
+    },
+    "P_peak_w": {
+      "ours_limit": 232.8087842898721,
+      "ours_U": 0.0002275866212100351,
+      "ours_p": 2.3076879874929843,
+      "ours_status": "OK",
+      "pylle_limit": null,
+      "pylle_U": 0.0019818748111724888,
+      "pylle_p": null,
+      "pylle_status": "NON_MONOTONE",
+      "limit_gap": null,
+      "band": null,
+      "coverage_factor": 2.0,
+      "kind": "relative",
+      "verdict": "INDETERMINATE",
+      "reason": "pylle: NON_MONOTONE"
+    },
+    "S3_modes": {
+      "ours_limit": 445.03504378460707,
+      "ours_U": 5.6744502698712085e-06,
+      "ours_p": 1.5629940557648099,
+      "ours_status": "OK",
+      "pylle_limit": null,
+      "pylle_U": 0.0002389979139197804,
+      "pylle_p": null,
+      "pylle_status": "NON_MONOTONE",
+      "limit_gap": null,
+      "band": null,
+      "coverage_factor": 2.0,
+      "kind": "relative",
+      "verdict": "INDETERMINATE",
+      "reason": "pylle: NON_MONOTONE"
+    },
+    "mu_DW": {
+      "ours_limit": -3075.2508890796776,
+      "ours_U": 1.0656715652745582e-06,
+      "ours_p": 2.4838943553487893,
+      "ours_status": "OK",
+      "pylle_limit": null,
+      "pylle_U": 0.00026708880930085557,
+      "pylle_p": null,
+      "pylle_status": "NON_MONOTONE",
+      "limit_gap": null,
+      "band": null,
+      "coverage_factor": 2.0,
+      "kind": "absolute",
+      "verdict": "INDETERMINATE",
+      "reason": "pylle: NON_MONOTONE"
+    },
+    "dw_power_dbc": {
+      "ours_limit": -22.627067169496698,
+      "ours_U": 0.0033750365916341268,
+      "ours_p": 1.9602029613560616,
+      "ours_status": "OK",
+      "pylle_limit": null,
+      "pylle_U": 0.1241715268745354,
+      "pylle_p": -3.916525346671113,
+      "pylle_status": "ORDER_OUT_OF_RANGE",
+      "limit_gap": null,
+      "band": null,
+      "coverage_factor": 2.0,
+      "kind": "relative",
+      "verdict": "INDETERMINATE",
+      "reason": "pylle: ORDER_OUT_OF_RANGE"
+    }
+  },
+  "containment_separated": [
+    "comb_frac"
+  ],
+  "gated_comparison_levels": {
+    "ours": "n1",
+    "pylle": "dt0.125_tight",
+    "rationale": "each side's value is paired with the state whose measured uncertainty Prompt A derived its tolerance from: ours at n_substeps=1 (ours_level='numerical_uncertainty_at_n1') and pyLLE at the finest level of the tight ladder (pylle_tag='tight'). Chosen by the frozen derivation, not from these results."
+  },
+  "existence": {
+    "scan_over_kappa": [
+      3.0,
+      5.0,
+      8.0,
+      16.0,
+      30.0,
+      40.0,
+      50.0
+    ],
+    "points": [
+      {
+        "delta_omega_over_kappa": 3.0,
+        "kerr_phase_per_roundtrip_rad": 0.03726866419554149,
+        "roundtrips": 2000,
+        "ours": {
+          "single": false,
+          "n_peaks": 14,
+          "contrast": 26.911805204667534,
+          "peak_power_w": 153.8524695026938,
+          "stationarity": {
+            "evaluations": {
+              "minus_0": {
+                "single": false,
+                "n_peaks": 14,
+                "contrast": 26.911805204667534,
+                "peak_power_w": 153.8524695026938
+              },
+              "minus_1": {
+                "single": false,
+                "n_peaks": 15,
+                "contrast": 26.44540667376516,
+                "peak_power_w": 151.11587777087294
+              },
+              "minus_2": {
+                "single": false,
+                "n_peaks": 16,
+                "contrast": 25.246866508122825,
+                "peak_power_w": 145.72156597891612
+              },
+              "minus_5": {
+                "single": false,
+                "n_peaks": 23,
+                "contrast": 22.95208201073007,
+                "peak_power_w": 134.38319682374825
+              },
+              "minus_10": {
+                "single": false,
+                "n_peaks": 20,
+                "contrast": 23.570139883629523,
+                "peak_power_w": 139.3841814766812
+              }
+            },
+            "peak_power_spread_rel": 0.12654507751404442,
+            "label_changes": false,
+            "flag": "NON_STATIONARY"
+          }
+        },
+        "pylle": {
+          "single": false,
+          "n_peaks": 8,
+          "contrast": 24.363710744655176,
+          "peak_power_w": 156.3134712455565,
+          "stationarity": {
+            "evaluations": {
+              "minus_0": {
+                "single": false,
+                "n_peaks": 8,
+                "contrast": 24.363710744655176,
+                "peak_power_w": 156.3134712455565
+              },
+              "minus_1": {
+                "single": false,
+                "n_peaks": 9,
+                "contrast": 23.228613139782595,
+                "peak_power_w": 149.90354323304527
+              },
+              "minus_2": {
+                "single": false,
+                "n_peaks": 10,
+                "contrast": 22.486698375856648,
+                "peak_power_w": 145.33754465684274
+              },
+              "minus_5": {
+                "single": false,
+                "n_peaks": 16,
+                "contrast": 19.924424946588832,
+                "peak_power_w": 128.2004558224501
+              },
+              "minus_10": {
+                "single": false,
+                "n_peaks": 22,
+                "contrast": 18.947308738392028,
+                "peak_power_w": 121.19727957267183
+              }
+            },
+            "peak_power_spread_rel": 0.22465236932599258,
+            "label_changes": false,
+            "flag": "NON_STATIONARY"
+          }
+        }
+      },
+      {
+        "delta_omega_over_kappa": 5.0,
+        "kerr_phase_per_roundtrip_rad": 0.062114440325902485,
+        "roundtrips": 2000,
+        "ours": {
+          "single": false,
+          "n_peaks": 0,
+          "contrast": 1.0074537668303736,
+          "peak_power_w": 1.2648729809654595,
+          "stationarity": {
+            "evaluations": {
+              "minus_0": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.0074537668303736,
+                "peak_power_w": 1.2648729809654595
+              },
+              "minus_1": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.007440170614464,
+                "peak_power_w": 1.2648688572769575
+              },
+              "minus_2": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.0074364156664126,
+                "peak_power_w": 1.2648574242714523
+              },
+              "minus_5": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.0073659486038178,
+                "peak_power_w": 1.2648270060967541
+              },
+              "minus_10": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.007400156526251,
+                "peak_power_w": 1.2650218207602089
+              }
+            },
+            "peak_power_spread_rel": 0.00015400103006733137,
+            "label_changes": false,
+            "flag": "STATIONARY"
+          }
+        },
+        "pylle": {
+          "single": false,
+          "n_peaks": 0,
+          "contrast": 1.0075076435623143,
+          "peak_power_w": 1.262284955988947,
+          "stationarity": {
+            "evaluations": {
+              "minus_0": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.0075076435623143,
+                "peak_power_w": 1.262284955988947
+              },
+              "minus_1": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.007514239957088,
+                "peak_power_w": 1.2623014278250348
+              },
+              "minus_2": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.007524450942585,
+                "peak_power_w": 1.2623096018682065
+              },
+              "minus_5": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.0074351727199753,
+                "peak_power_w": 1.2622656136527224
+              },
+              "minus_10": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.0074459676288665,
+                "peak_power_w": 1.2623944809726917
+              }
+            },
+            "peak_power_spread_rel": 0.00010208165665459168,
+            "label_changes": false,
+            "flag": "STATIONARY"
+          }
+        }
+      },
+      {
+        "delta_omega_over_kappa": 8.0,
+        "kerr_phase_per_roundtrip_rad": 0.09938310452144399,
+        "roundtrips": 2000,
+        "ours": {
+          "single": true,
+          "n_peaks": 1,
+          "contrast": 88.71803384141522,
+          "peak_power_w": 39.14717754711808,
+          "stationarity": {
+            "evaluations": {
+              "minus_0": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 88.71803384141522,
+                "peak_power_w": 39.14717754711808
+              },
+              "minus_1": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 88.22615066123419,
+                "peak_power_w": 38.92647689464661
+              },
+              "minus_2": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 87.77409376713604,
+                "peak_power_w": 38.72717833110317
+              },
+              "minus_5": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 86.71795269856695,
+                "peak_power_w": 38.260736490115484
+              },
+              "minus_10": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 86.03817890420164,
+                "peak_power_w": 37.944809744608136
+              }
+            },
+            "peak_power_spread_rel": 0.030714035540946996,
+            "label_changes": false,
+            "flag": "NON_STATIONARY"
+          }
+        },
+        "pylle": {
+          "single": true,
+          "n_peaks": 1,
+          "contrast": 87.0242907110188,
+          "peak_power_w": 38.38102396692838,
+          "stationarity": {
+            "evaluations": {
+              "minus_0": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 87.0242907110188,
+                "peak_power_w": 38.38102396692838
+              },
+              "minus_1": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 86.7488788622806,
+                "peak_power_w": 38.25593856536317
+              },
+              "minus_2": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 86.52144524321966,
+                "peak_power_w": 38.153416618818724
+              },
+              "minus_5": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 86.15164085233812,
+                "peak_power_w": 37.98611443452812
+              },
+              "minus_10": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 86.6976757062288,
+                "peak_power_w": 38.20830847695166
+              }
+            },
+            "peak_power_spread_rel": 0.010289186988355048,
+            "label_changes": false,
+            "flag": "NON_STATIONARY"
+          }
+        }
+      },
+      {
+        "delta_omega_over_kappa": 16.0,
+        "kerr_phase_per_roundtrip_rad": 0.19876620904288797,
+        "roundtrips": 2000,
+        "ours": {
+          "single": true,
+          "n_peaks": 1,
+          "contrast": 1203.5028117753805,
+          "peak_power_w": 129.62893268511397,
+          "stationarity": {
+            "evaluations": {
+              "minus_0": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 1203.5028117753805,
+                "peak_power_w": 129.62893268511397
+              },
+              "minus_1": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 1203.9534813514645,
+                "peak_power_w": 129.67980081697334
+              },
+              "minus_2": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 1204.235751877331,
+                "peak_power_w": 129.71274274220107
+              },
+              "minus_5": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 1204.0810972316417,
+                "peak_power_w": 129.70395517753033
+              },
+              "minus_10": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 1200.5304770496482,
+                "peak_power_w": 129.3316384463343
+              }
+            },
+            "peak_power_spread_rel": 0.0029380636613644553,
+            "label_changes": false,
+            "flag": "STATIONARY"
+          }
+        },
+        "pylle": {
+          "single": true,
+          "n_peaks": 1,
+          "contrast": 1209.0539856482872,
+          "peak_power_w": 130.22060659399108,
+          "stationarity": {
+            "evaluations": {
+              "minus_0": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 1209.0539856482872,
+                "peak_power_w": 130.22060659399108
+              },
+              "minus_1": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 1210.9743577366055,
+                "peak_power_w": 130.4305264618973
+              },
+              "minus_2": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 1212.7570018634733,
+                "peak_power_w": 130.62428729426142
+              },
+              "minus_5": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 1217.1827005538646,
+                "peak_power_w": 131.10765261446574
+              },
+              "minus_10": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 1221.482965048101,
+                "peak_power_w": 131.58182676325276
+              }
+            },
+            "peak_power_spread_rel": 0.010345046901581981,
+            "label_changes": false,
+            "flag": "NON_STATIONARY"
+          }
+        }
+      },
+      {
+        "delta_omega_over_kappa": 30.0,
+        "kerr_phase_per_roundtrip_rad": 0.3726866419554149,
+        "roundtrips": 2000,
+        "ours": {
+          "single": true,
+          "n_peaks": 1,
+          "contrast": 7637.793648326564,
+          "peak_power_w": 233.99356345616064,
+          "stationarity": {
+            "evaluations": {
+              "minus_0": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 7637.793648326564,
+                "peak_power_w": 233.99356345616064
+              },
+              "minus_1": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 7643.828505663844,
+                "peak_power_w": 234.19182458626952
+              },
+              "minus_2": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 7649.873119444958,
+                "peak_power_w": 234.35381683074758
+              },
+              "minus_5": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 7659.145065690071,
+                "peak_power_w": 234.6219094956786
+              },
+              "minus_10": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 7653.349024762437,
+                "peak_power_w": 234.33228543015176
+              }
+            },
+            "peak_power_spread_rel": 0.0026781217528601595,
+            "label_changes": false,
+            "flag": "STATIONARY"
+          }
+        },
+        "pylle": {
+          "single": true,
+          "n_peaks": 1,
+          "contrast": 7775.814210625205,
+          "peak_power_w": 238.41634063894216,
+          "stationarity": {
+            "evaluations": {
+              "minus_0": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 7775.814210625205,
+                "peak_power_w": 238.41634063894216
+              },
+              "minus_1": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 7786.890870036034,
+                "peak_power_w": 238.77718351604557
+              },
+              "minus_2": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 7798.731067170525,
+                "peak_power_w": 239.12162991827702
+              },
+              "minus_5": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 7833.428697380586,
+                "peak_power_w": 240.0477864531926
+              },
+              "minus_10": {
+                "single": true,
+                "n_peaks": 1,
+                "contrast": 7872.921040102956,
+                "peak_power_w": 241.2092552487254
+              }
+            },
+            "peak_power_spread_rel": 0.011578803669466621,
+            "label_changes": false,
+            "flag": "NON_STATIONARY"
+          }
+        }
+      },
+      {
+        "delta_omega_over_kappa": 40.0,
+        "kerr_phase_per_roundtrip_rad": 0.4969155226072199,
+        "roundtrips": 2000,
+        "ours": {
+          "single": false,
+          "n_peaks": 0,
+          "contrast": 1.0368211805668046,
+          "peak_power_w": 0.01786747537532117,
+          "stationarity": {
+            "evaluations": {
+              "minus_0": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.0368211805668046,
+                "peak_power_w": 0.01786747537532117
+              },
+              "minus_1": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.0368578997454065,
+                "peak_power_w": 0.017863902650250476
+              },
+              "minus_2": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.035757097844452,
+                "peak_power_w": 0.01783882293843882
+              },
+              "minus_5": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.0373786216714507,
+                "peak_power_w": 0.017866300992412713
+              },
+              "minus_10": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.034099017379334,
+                "peak_power_w": 0.01786377366369834
+              }
+            },
+            "peak_power_spread_rel": 0.0016036085837804182,
+            "label_changes": false,
+            "flag": "STATIONARY"
+          }
+        },
+        "pylle": {
+          "single": false,
+          "n_peaks": 0,
+          "contrast": 1.0419932505058673,
+          "peak_power_w": 0.018027762006124933,
+          "stationarity": {
+            "evaluations": {
+              "minus_0": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.0419932505058673,
+                "peak_power_w": 0.018027762006124933
+              },
+              "minus_1": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.0419013881428194,
+                "peak_power_w": 0.018021304030130116
+              },
+              "minus_2": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.0405167884676465,
+                "peak_power_w": 0.01799136289490896
+              },
+              "minus_5": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.0489898761749836,
+                "peak_power_w": 0.0181213159359326
+              },
+              "minus_10": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.0352162451456153,
+                "peak_power_w": 0.01783515992653703
+              }
+            },
+            "peak_power_spread_rel": 0.01579112744390456,
+            "label_changes": false,
+            "flag": "NON_STATIONARY"
+          }
+        }
+      },
+      {
+        "delta_omega_over_kappa": 50.0,
+        "kerr_phase_per_roundtrip_rad": 0.6211444032590249,
+        "roundtrips": 2000,
+        "ours": {
+          "single": false,
+          "n_peaks": 0,
+          "contrast": 1.0458177560494815,
+          "peak_power_w": 0.011601135785209077,
+          "stationarity": {
+            "evaluations": {
+              "minus_0": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.0458177560494815,
+                "peak_power_w": 0.011601135785209077
+              },
+              "minus_1": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.0456676664382676,
+                "peak_power_w": 0.011593521341356007
+              },
+              "minus_2": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.0497660118965184,
+                "peak_power_w": 0.011634201206144456
+              },
+              "minus_5": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.0467901651621607,
+                "peak_power_w": 0.011587578308134486
+              },
+              "minus_10": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.042436576828922,
+                "peak_power_w": 0.011534797785021854
+              }
+            },
+            "peak_power_spread_rel": 0.008544069279986584,
+            "label_changes": false,
+            "flag": "STATIONARY"
+          }
+        },
+        "pylle": {
+          "single": false,
+          "n_peaks": 0,
+          "contrast": 1.0512105071869098,
+          "peak_power_w": 0.011653337052757609,
+          "stationarity": {
+            "evaluations": {
+              "minus_0": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.0512105071869098,
+                "peak_power_w": 0.011653337052757609
+              },
+              "minus_1": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.0493169582286828,
+                "peak_power_w": 0.011626667351460758
+              },
+              "minus_2": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.0421065530851257,
+                "peak_power_w": 0.011541862501505344
+              },
+              "minus_5": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.041980993052553,
+                "peak_power_w": 0.011531272871299757
+              },
+              "minus_10": {
+                "single": false,
+                "n_peaks": 0,
+                "contrast": 1.0477188220350944,
+                "peak_power_w": 0.011598102888814542
+              }
+            },
+            "peak_power_spread_rel": 0.010474611770451382,
+            "label_changes": false,
+            "flag": "NON_STATIONARY"
+          }
+        }
+      }
+    ],
+    "survival_ours": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false
+    ],
+    "survival_pylle": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false
+    ],
+    "bisect_iters": 5,
+    "bisect_trace": [
+      {
+        "iteration": 0,
+        "ours": {
+          "lo": {
+            "midpoint_over_kappa": 6.5,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 92.77154694997729,
+            "peak_power_w": 63.909149829877364
+          },
+          "hi": {
+            "midpoint_over_kappa": 35.0,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 11704.185558007954,
+            "peak_power_w": 263.88369068366364
+          }
+        },
+        "pylle": {
+          "lo": {
+            "midpoint_over_kappa": 6.5,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 70.01649209006882,
+            "peak_power_w": 48.182872084667814
+          },
+          "hi": {
+            "midpoint_over_kappa": 35.0,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 12130.377122219314,
+            "peak_power_w": 280.97649991507393
+          }
+        }
+      },
+      {
+        "iteration": 1,
+        "ours": {
+          "lo": {
+            "midpoint_over_kappa": 5.75,
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.009598614142605,
+            "peak_power_w": 0.9097102395450855
+          },
+          "hi": {
+            "midpoint_over_kappa": 37.5,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 14923.000825911247,
+            "peak_power_w": 293.5815293386979
+          }
+        },
+        "pylle": {
+          "lo": {
+            "midpoint_over_kappa": 5.75,
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.0089860442469758,
+            "peak_power_w": 0.9080881805233917
+          },
+          "hi": {
+            "midpoint_over_kappa": 37.5,
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.060242975759671,
+            "peak_power_w": 0.020777949531378705
+          }
+        }
+      },
+      {
+        "iteration": 2,
+        "ours": {
+          "lo": {
+            "midpoint_over_kappa": 6.125,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 27.593757810519012,
+            "peak_power_w": 21.636426053664824
+          },
+          "hi": {
+            "midpoint_over_kappa": 38.75,
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.044849492357863,
+            "peak_power_w": 0.01915849445634648
+          }
+        },
+        "pylle": {
+          "lo": {
+            "midpoint_over_kappa": 6.125,
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.2680126603546322,
+            "peak_power_w": 0.9834744929351797
+          },
+          "hi": {
+            "midpoint_over_kappa": 36.25,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 13475.41474551424,
+            "peak_power_w": 293.9266836086985
+          }
+        }
+      },
+      {
+        "iteration": 3,
+        "ours": {
+          "lo": {
+            "midpoint_over_kappa": 5.9375,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 61.33307533342674,
+            "peak_power_w": 51.08639920368891
+          },
+          "hi": {
+            "midpoint_over_kappa": 38.125,
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.0558468026384242,
+            "peak_power_w": 0.02013540926195025
+          }
+        },
+        "pylle": {
+          "lo": {
+            "midpoint_over_kappa": 6.3125,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 38.37610531358083,
+            "peak_power_w": 28.129423179678906
+          },
+          "hi": {
+            "midpoint_over_kappa": 36.875,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 13621.868450362355,
+            "peak_power_w": 299.928377756698
+          }
+        }
+      },
+      {
+        "iteration": 4,
+        "ours": {
+          "lo": {
+            "midpoint_over_kappa": 5.84375,
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.1949406261318503,
+            "peak_power_w": 1.038175973844836
+          },
+          "hi": {
+            "midpoint_over_kappa": 37.8125,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 14582.190383886773,
+            "peak_power_w": 282.37574924500706
+          }
+        },
+        "pylle": {
+          "lo": {
+            "midpoint_over_kappa": 6.21875,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 168.45786442978678,
+            "peak_power_w": 127.16143733341455
+          },
+          "hi": {
+            "midpoint_over_kappa": 37.1875,
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.0631332191427767,
+            "peak_power_w": 0.02121280906249244
+          }
+        }
+      }
+    ],
+    "hold_time_sensitivity": {
+      "lower_ours": {
+        "midpoint_over_kappa": 5.890625,
+        "evaluations": {
+          "1x": {
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.0281242006798543,
+            "peak_power_w": 0.8762695356203414
+          },
+          "2x": {
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.0000680403955977,
+            "peak_power_w": 0.8530984879930885
+          },
+          "4x": {
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.0000000002045433,
+            "peak_power_w": 0.8530401817835448
+          }
+        },
+        "classification_changed_with_hold": false,
+        "peak_power_spread_rel": 0.02650937056752946
+      },
+      "lower_pylle": {
+        "midpoint_over_kappa": 6.171875,
+        "evaluations": {
+          "1x": {
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 30.90216677829765,
+            "peak_power_w": 23.80747157482683
+          },
+          "2x": {
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 24.054668170533144,
+            "peak_power_w": 18.43197302128656
+          },
+          "4x": {
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 30.220754702633794,
+            "peak_power_w": 23.131914807609682
+          }
+        },
+        "classification_changed_with_hold": false,
+        "peak_power_spread_rel": 0.22579040099428835
+      },
+      "upper_ours": {
+        "midpoint_over_kappa": 37.96875,
+        "evaluations": {
+          "1x": {
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 14784.745524624792,
+            "peak_power_w": 284.6855939790824
+          },
+          "2x": {
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 14540.344688833542,
+            "peak_power_w": 279.27713524695207
+          },
+          "4x": {
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 15414.62395873033,
+            "peak_power_w": 296.40811190784393
+          }
+        },
+        "classification_changed_with_hold": false,
+        "peak_power_spread_rel": 0.05779523559806637
+      },
+      "upper_pylle": {
+        "midpoint_over_kappa": 37.03125,
+        "evaluations": {
+          "1x": {
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.0678891121835878,
+            "peak_power_w": 0.021568257366701128
+          },
+          "2x": {
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.000183385635858,
+            "peak_power_w": 0.020130479186928143
+          },
+          "4x": {
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.0000000006473635,
+            "peak_power_w": 0.020126883317370475
+          }
+        },
+        "classification_changed_with_hold": false,
+        "peak_power_spread_rel": 0.06682848896063184
+      }
+    },
+    "hold_time_multipliers": [
+      1,
+      2,
+      4
+    ],
+    "lower_bracket_ours": [
+      5.84375,
+      5.9375
+    ],
+    "lower_bracket_pylle": [
+      6.125,
+      6.21875
+    ],
+    "lower_midpoint_ours": 5.890625,
+    "lower_halfwidth_ours": 0.046875,
+    "lower_midpoint_pylle": 6.171875,
+    "lower_halfwidth_pylle": 0.046875,
+    "lower_u_ours": 0.0,
+    "lower_u_pylle": 0.0,
+    "upper_bracket_ours": [
+      37.8125,
+      38.125
+    ],
+    "upper_bracket_pylle": [
+      36.875,
+      37.1875
+    ],
+    "upper_midpoint_ours": 37.96875,
+    "upper_halfwidth_ours": 0.15625,
+    "upper_midpoint_pylle": 37.03125,
+    "upper_halfwidth_pylle": 0.15625,
+    "upper_u_ours": 0.0,
+    "upper_u_pylle": 0.0
+  },
+  "spectral_containment": {
+    "ours": {
+      "mu_minus_half_dbc": -82.10897726327335,
+      "mu_plus_half_dbc": -44.049364424967166,
+      "threshold_dbc": -100.0,
+      "contained": false,
+      "warning": "COMB NOT SPECTRALLY CONTAINED: grid edge at -44.0 dBc, above the -100 dBc containment threshold. Any observable that integrates the wings (line counts, band powers) is grid-limited here."
+    },
+    "pylle": {
+      "mu_minus_half_dbc": -82.5076582425441,
+      "mu_plus_half_dbc": -44.09224138736995,
+      "threshold_dbc": -100.0,
+      "contained": false,
+      "warning": "COMB NOT SPECTRALLY CONTAINED: grid edge at -44.1 dBc, above the -100 dBc containment threshold. Any observable that integrates the wings (line counts, band powers) is grid-limited here."
+    },
+    "mu_half": 3300,
+    "warning": "COMB NOT SPECTRALLY CONTAINED: grid edge at -44.0 dBc, above the -100 dBc containment threshold. Any observable that integrates the wings (line counts, band powers) is grid-limited here.",
+    "blue_dw_phase_match_mu": [
+      -3038,
+      -434,
+      404,
+      3239
+    ],
+    "blue_dw_margin_modes": 61,
+    "blue_dw_resolved": false
+  },
+  "diagnostics_detail": {
+    "comb_line_count_60dbc": {
+      "ours": {
+        "N60": 3324,
+        "dN60_ddB": 92,
+        "N60_core": 3001,
+        "N60_mid": 246,
+        "N60_edge": 77
+      },
+      "pylle": {
+        "N60": 3329,
+        "dN60_ddB": 91,
+        "N60_core": 3001,
+        "N60_mid": 253,
+        "N60_edge": 75
+      },
+      "note": "conditioning dN60/ddB is the number of lines a 1 dB threshold shift moves; the core counts are what a physical comb-width claim would rest on"
+    },
+    "integer_3db_span": {
+      "ours": 445,
+      "pylle": 444,
+      "quantum_modes": 1,
+      "note": "one mode is the smallest resolvable difference; v1's 0.23% agreement was exactly one quantum"
+    },
+    "integer_dw_argmax": {
+      "ours": -3075.2501757214577,
+      "pylle": -3075.2479455254615,
+      "note": "the continuous centroid is the gated quantity; the rounded index is reported only for continuity with v1"
+    },
+    "raw_peak_power": {
+      "ours": 228.42337794850388,
+      "pylle": 230.64186371291083,
+      "ours_band_limited": 232.82219575226196,
+      "pylle_band_limited": 235.54864584008817,
+      "ours_subsample_offset": -0.28125,
+      "pylle_subsample_offset": -0.3125,
+      "note": "the raw grid peak carries a sampling-phase bias; the band-limited peak is the gated quantity"
+    },
+    "spectral_residual_by_band": {
+      "finest_levels": [
+        {
+          "mu_band": [
+            0,
+            50
+          ],
+          "n_modes": 99,
+          "median_ours_minus_pylle_db": -0.04785379658534694,
+          "p90_abs_db": 0.047902881438621134,
+          "median_abs_Dint_t_r": 0.007923019899146637,
+          "max_abs_Dint_t_r": 0.021893482006269054
+        },
+        {
+          "mu_band": [
+            50,
+            222
+          ],
+          "n_modes": 344,
+          "median_ours_minus_pylle_db": -0.047713084411739715,
+          "p90_abs_db": 0.047895146839869084,
+          "median_abs_Dint_t_r": 0.025147274452270885,
+          "max_abs_Dint_t_r": 0.06898323295751643
+        },
+        {
+          "mu_band": [
+            222,
+            500
+          ],
+          "n_modes": 556,
+          "median_ours_minus_pylle_db": -0.047256471223388274,
+          "p90_abs_db": 0.04759445311491817,
+          "median_abs_Dint_t_r": 0.13636433649595775,
+          "max_abs_Dint_t_r": 0.26276835983457436
+        },
+        {
+          "mu_band": [
+            500,
+            1000
+          ],
+          "n_modes": 1000,
+          "median_ours_minus_pylle_db": -0.04785812197671291,
+          "p90_abs_db": 0.04990099115720028,
+          "median_abs_Dint_t_r": 0.5523677550936462,
+          "max_abs_Dint_t_r": 1.0085196801714351
+        },
+        {
+          "mu_band": [
+            1000,
+            1500
+          ],
+          "n_modes": 1000,
+          "median_ours_minus_pylle_db": -0.055553941903461634,
+          "p90_abs_db": 0.06388255783906586,
+          "median_abs_Dint_t_r": 1.3480690421155357,
+          "max_abs_Dint_t_r": 2.12308170886131
+        },
+        {
+          "mu_band": [
+            1500,
+            2000
+          ],
+          "n_modes": 1000,
+          "median_ours_minus_pylle_db": -0.0657948178586345,
+          "p90_abs_db": 0.0813597252821026,
+          "median_abs_Dint_t_r": 2.1075238926982056,
+          "max_abs_Dint_t_r": 3.119217373552735
+        },
+        {
+          "mu_band": [
+            2000,
+            2500
+          ],
+          "n_modes": 1000,
+          "median_ours_minus_pylle_db": -0.047426322698896684,
+          "p90_abs_db": 0.07600978149185948,
+          "median_abs_Dint_t_r": 2.616415325426691,
+          "max_abs_Dint_t_r": 3.303004113335108
+        },
+        {
+          "mu_band": [
+            2500,
+            3000
+          ],
+          "n_modes": 1000,
+          "median_ours_minus_pylle_db": 0.1604686453420996,
+          "p90_abs_db": 0.40242839484581056,
+          "median_abs_Dint_t_r": 1.8234886038137579,
+          "max_abs_Dint_t_r": 3.068619635192348
+        },
+        {
+          "mu_band": [
+            3000,
+            3300
+          ],
+          "n_modes": 602,
+          "median_ours_minus_pylle_db": 0.32321207014888387,
+          "p90_abs_db": 0.44763400618555804,
+          "median_abs_Dint_t_r": 0.6757022250466349,
+          "max_abs_Dint_t_r": 2.9325032674823337
+        }
+      ],
+      "matched_coarse_n1_vs_dt1_shipped": [
+        {
+          "mu_band": [
+            0,
+            50
+          ],
+          "n_modes": 99,
+          "median_ours_minus_pylle_db": 0.07078089115452357,
+          "p90_abs_db": 0.08442638854073366,
+          "median_abs_Dint_t_r": 0.007923019899146637,
+          "max_abs_Dint_t_r": 0.021893482006269054
+        },
+        {
+          "mu_band": [
+            50,
+            222
+          ],
+          "n_modes": 344,
+          "median_ours_minus_pylle_db": 0.0695871444352445,
+          "p90_abs_db": 0.10994216863901798,
+          "median_abs_Dint_t_r": 0.025147274452270885,
+          "max_abs_Dint_t_r": 0.06898323295751643
+        },
+        {
+          "mu_band": [
+            222,
+            500
+          ],
+          "n_modes": 556,
+          "median_ours_minus_pylle_db": 0.00036400355116406047,
+          "p90_abs_db": 0.12810694566625713,
+          "median_abs_Dint_t_r": 0.13636433649595775,
+          "max_abs_Dint_t_r": 0.26276835983457436
+        },
+        {
+          "mu_band": [
+            500,
+            1000
+          ],
+          "n_modes": 1000,
+          "median_ours_minus_pylle_db": -0.2834556510186914,
+          "p90_abs_db": 0.5462434470601586,
+          "median_abs_Dint_t_r": 0.5523677550936462,
+          "max_abs_Dint_t_r": 1.0085196801714351
+        },
+        {
+          "mu_band": [
+            1000,
+            1500
+          ],
+          "n_modes": 1000,
+          "median_ours_minus_pylle_db": -1.096578769879148,
+          "p90_abs_db": 1.6262277878069227,
+          "median_abs_Dint_t_r": 1.3480690421155357,
+          "max_abs_Dint_t_r": 2.12308170886131
+        },
+        {
+          "mu_band": [
+            1500,
+            2000
+          ],
+          "n_modes": 1000,
+          "median_ours_minus_pylle_db": -2.683736626920698,
+          "p90_abs_db": 3.5554688624912667,
+          "median_abs_Dint_t_r": 2.1075238926982056,
+          "max_abs_Dint_t_r": 3.119217373552735
+        },
+        {
+          "mu_band": [
+            2000,
+            2500
+          ],
+          "n_modes": 1000,
+          "median_ours_minus_pylle_db": -4.976589888179525,
+          "p90_abs_db": 6.101965175936529,
+          "median_abs_Dint_t_r": 2.616415325426691,
+          "max_abs_Dint_t_r": 3.303004113335108
+        },
+        {
+          "mu_band": [
+            2500,
+            3000
+          ],
+          "n_modes": 1000,
+          "median_ours_minus_pylle_db": -5.632281247585979,
+          "p90_abs_db": 6.67344925461003,
+          "median_abs_Dint_t_r": 1.8234886038137579,
+          "max_abs_Dint_t_r": 3.068619635192348
+        },
+        {
+          "mu_band": [
+            3000,
+            3300
+          ],
+          "n_modes": 602,
+          "median_ours_minus_pylle_db": -2.6622372526929396,
+          "p90_abs_db": 3.858690667889371,
+          "median_abs_Dint_t_r": 0.6757022250466349,
+          "max_abs_Dint_t_r": 2.9325032674823337
+        }
+      ],
+      "dt1_tight_picard": [
+        {
+          "mu_band": [
+            0,
+            50
+          ],
+          "n_modes": 99,
+          "median_ours_minus_pylle_db": 0.07243089995357721,
+          "p90_abs_db": 0.07394272935599559,
+          "median_abs_Dint_t_r": 0.007923019899146637,
+          "max_abs_Dint_t_r": 0.021893482006269054
+        },
+        {
+          "mu_band": [
+            50,
+            222
+          ],
+          "n_modes": 344,
+          "median_ours_minus_pylle_db": 0.06418697484597047,
+          "p90_abs_db": 0.07246630565648218,
+          "median_abs_Dint_t_r": 0.025147274452270885,
+          "max_abs_Dint_t_r": 0.06898323295751643
+        },
+        {
+          "mu_band": [
+            222,
+            500
+          ],
+          "n_modes": 556,
+          "median_ours_minus_pylle_db": 0.002110195156690864,
+          "p90_abs_db": 0.053915474857152645,
+          "median_abs_Dint_t_r": 0.13636433649595775,
+          "max_abs_Dint_t_r": 0.26276835983457436
+        },
+        {
+          "mu_band": [
+            500,
+            1000
+          ],
+          "n_modes": 1000,
+          "median_ours_minus_pylle_db": -0.2772280799540141,
+          "p90_abs_db": 0.5321140543175474,
+          "median_abs_Dint_t_r": 0.5523677550936462,
+          "max_abs_Dint_t_r": 1.0085196801714351
+        },
+        {
+          "mu_band": [
+            1000,
+            1500
+          ],
+          "n_modes": 1000,
+          "median_ours_minus_pylle_db": -1.1054362713861536,
+          "p90_abs_db": 1.6395594226969643,
+          "median_abs_Dint_t_r": 1.3480690421155357,
+          "max_abs_Dint_t_r": 2.12308170886131
+        },
+        {
+          "mu_band": [
+            1500,
+            2000
+          ],
+          "n_modes": 1000,
+          "median_ours_minus_pylle_db": -2.701747976313584,
+          "p90_abs_db": 3.5704175411375765,
+          "median_abs_Dint_t_r": 2.1075238926982056,
+          "max_abs_Dint_t_r": 3.119217373552735
+        },
+        {
+          "mu_band": [
+            2000,
+            2500
+          ],
+          "n_modes": 1000,
+          "median_ours_minus_pylle_db": -4.974167724059356,
+          "p90_abs_db": 5.786112033407382,
+          "median_abs_Dint_t_r": 2.616415325426691,
+          "max_abs_Dint_t_r": 3.303004113335108
+        },
+        {
+          "mu_band": [
+            2500,
+            3000
+          ],
+          "n_modes": 1000,
+          "median_ours_minus_pylle_db": -5.5528993083393345,
+          "p90_abs_db": 6.007600833318968,
+          "median_abs_Dint_t_r": 1.8234886038137579,
+          "max_abs_Dint_t_r": 3.068619635192348
+        },
+        {
+          "mu_band": [
+            3000,
+            3300
+          ],
+          "n_modes": 602,
+          "median_ours_minus_pylle_db": -3.263514390017775,
+          "p90_abs_db": 4.899307960066114,
+          "median_abs_Dint_t_r": 0.6757022250466349,
+          "max_abs_Dint_t_r": 2.9325032674823337
+        }
+      ],
+      "picard_floor_hypothesis_test": {
+        "hypothesis": "the wing gap is pyLLE's shipped 1e-2 Picard tolerance leaving a broadband numerical floor above the true comb wings",
+        "test": "hold dt = 1 and tighten only the Picard pair to 1e-8 / 60; if the hypothesis holds, the |mu| >= 2000 wing gap must shrink toward 0",
+        "wing_median_gap_db_dt1_shipped_tol": -4.976589888179525,
+        "wing_median_gap_db_dt1_tight_tol": -4.974167724059356,
+        "change_db": 0.002422164120169157,
+        "mean_picard_iters_shipped": 2.0,
+        "mean_picard_iters_tight": 8.7232,
+        "verdict": "NOT_SUPPORTED"
+      }
+    },
+    "spectral_edge_dbc": {
+      "ours": {
+        "mu_minus_half_dbc": -82.10897726327335,
+        "mu_plus_half_dbc": -44.049364424967166,
+        "threshold_dbc": -100.0,
+        "contained": false,
+        "warning": "COMB NOT SPECTRALLY CONTAINED: grid edge at -44.0 dBc, above the -100 dBc containment threshold. Any observable that integrates the wings (line counts, band powers) is grid-limited here."
+      },
+      "pylle": {
+        "mu_minus_half_dbc": -82.5076582425441,
+        "mu_plus_half_dbc": -44.09224138736995,
+        "threshold_dbc": -100.0,
+        "contained": false,
+        "warning": "COMB NOT SPECTRALLY CONTAINED: grid edge at -44.1 dBc, above the -100 dBc containment threshold. Any observable that integrates the wings (line counts, band powers) is grid-limited here."
+      },
+      "mu_half": 3300,
+      "warning": "COMB NOT SPECTRALLY CONTAINED: grid edge at -44.0 dBc, above the -100 dBc containment threshold. Any observable that integrates the wings (line counts, band powers) is grid-limited here.",
+      "blue_dw_phase_match_mu": [
+        -3038,
+        -434,
+        404,
+        3239
+      ],
+      "blue_dw_margin_modes": 61,
+      "blue_dw_resolved": false
+    },
+    "dint_phase_budget": {
+      "n_modes_over_pi": 439,
+      "smallest_abs_mu_over_pi": 2021,
+      "max_abs_Dint_t_r": 3.303004113335108,
+      "note": "a per-round-trip phase above pi is under-resolved at dt = 1 in BOTH codes; it is a shared property of the discretization"
+    }
+  },
+  "numerical_digest": "32f53054c2c8b33ea9a93162e2991001cd67d6eb271be310ae49431017efb9d3"
+}

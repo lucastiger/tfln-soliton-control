@@ -1,3 +1,5 @@
+SUPERSEDED by docs/PYLLE_STATUS_V2.md - retained as the historical record of the v1 run
+
 # pyLLE cross-check: OPERATIONAL
 
 Status as of 2026-08-16. Supersedes an earlier revision of this file that
@@ -69,6 +71,12 @@ rather than bookkeeping:
   the CSV row `mu = 0`, which is 7.11 FSR away from the nominal 1.55 um. pyLLE
   locates the pump by frequency, so the naive translation puts the two codes on
   pump modes seven free spectral ranges apart.
+
+> **SUPERSEDED — see "Correction: pyLLE is refinable" at the end of this
+> document.** The paragraph below is kept verbatim because it is what the
+> committed cross-check was reasoned from. Its second clause is wrong: the floor
+> is real, but it *is* adjustable. Both `dt` and the nonlinear tolerance are
+> reachable parameters that upstream disables rather than omits.
 
 The accuracy floor is **pyLLE's, and it is not adjustable**: `ComputeLLE.jl:123`
 hardwires `dt = 1` round trip, and `:278` overrides the CLI nonlinear-iteration
@@ -163,3 +171,150 @@ Quantitative verification continues to rest on:
   of accuracy against manufactured solutions.
 
 Both are stronger claims than agreement with another code at a few percent.
+
+---
+
+# Correction: pyLLE is refinable
+
+Added 2026-08-16. Evidence: `third_party/pylle/` (vendored kernel, three audited
+patches, `verify_vendor.py`) and `validation/results/pylle_refinement_dw30k.json`.
+Nothing above has been deleted; the affected paragraph is marked superseded in
+place.
+
+## 1. The claim being corrected
+
+> "The accuracy floor is **pyLLE's, and it is not adjustable**: `ComputeLLE.jl:123`
+> hardwires `dt = 1` round trip, and `:278` overrides the CLI nonlinear-iteration
+> tolerance with `1e-2`. … Sub-2% cross-code agreement is therefore not
+> attainable there by either code, which is a fact about pyLLE as a reference,
+> not about this repo's solver."
+
+The factual observations in that sentence are correct. The conclusion drawn from
+them is not.
+
+## 2. What the source actually shows
+
+**`dt` is a plumbed parameter, not a structural constant.** Every occurrence of
+`dt` in the upstream kernel was enumerated before any patch was written. Four are
+live — `Nt = round(t_ramp/tR/dt)` (:129), the drive kick `.*dt` (:348), the
+linear half operator `.*dt/2` (:350), and the trapezoidal nonlinear phase
+`.*dt/2` (:362) — and **all four are dimensionally consistent with a step of
+length `dt` round trips**. `dt = 1` at :123 is the only obstacle, and :122 is a
+commented-out adaptive expression showing the author intended it to vary. Had any
+use been inconsistent, the correct conclusion would have been that pyLLE is *not*
+refinable; that is now a standing test.
+
+**The tolerance CLI already exists upstream and is clobbered.** `:46-47` parse
+`tol` and `maxiter` from `ARGS`; `:278-279` then unconditionally overwrite them
+with `1e-2` and `10`. (`param["tol"] = 1e-3` at :402 is separately dead —
+`SSFM½step` reads module globals and never consults `param`.) The knob was
+built and then disabled, not absent.
+
+Three minimal patches restore both. With `dt=1.0, tol=1e-2, maxiter=10` and the
+probe patch reverted, the vendored kernel reproduces upstream **bit-for-bit**
+(relative L2 = `0.000e+00`), so nothing was changed except what is documented.
+
+## 3. Measured refinement table
+
+pyLLE, vendored kernel, DW operating point (6601 modes, `Tscan = 5000`,
+δω 16κ→30κ, same deterministic seed the cross-check uses). `P_peak` is the
+band-limited peak power of `validation/convergence_lle.observables_v2`.
+
+| dt | Nt | tol | mean Picard | max | P_peak (W) | S3 | mu_DW | U_mean (W) | wall (s) |
+|---|---|---|---|---|---|---|---|---|---|
+| 1.0 | 5000 | 1e-2 | **2.00** | 2 | 239.966 | 445.440 | −3074.556 | 0.192124 | 32.6 |
+| 0.5 | 10000 | 1e-2 | **2.00** | 2 | 236.107 | 445.078 | −3074.941 | 0.192871 | 54.0 |
+| 0.25 | 20000 | 1e-2 | **2.00** | 2 | 236.461 | 445.059 | −3075.093 | 0.193101 | 103.2 |
+| 0.125 | 40000 | 1e-2 | **1.00** | 1 | 235.993 | 445.165 | −3074.272 | 0.193173 | 139.9 |
+| 1.0 | 5000 | 1e-8 | 8.72 | 10 | 240.138 | 445.316 | −3074.658 | 0.192192 | 84.3 |
+| 0.5 | 10000 | 1e-8 | 5.50 | 6 | 237.446 | 445.128 | −3075.045 | 0.192861 | 105.4 |
+| 0.25 | 20000 | 1e-8 | 4.00 | 4 | 235.438 | 445.012 | −3075.228 | 0.193103 | 148.8 |
+| 0.125 | 40000 | 1e-8 | 3.70 | 4 | 235.549 | 445.027 | −3075.248 | 0.193204 | 269.6 |
+
+Zero maxiter exhaustions anywhere; no `Convergence Error` was printed by any run.
+
+**pyLLE moves by 1.9% under refinement** (240.14 → 235.55 W at tight tolerance),
+which confirms the premise: upstream at `dt = 1` really was ~2% from its own
+converged answer. The floor was real. It was simply not a floor.
+
+**Does it converge to the same limit as ours?** Partly, and the split is
+informative:
+
+| observable | pyLLE (refined) | ours (Prompt B, Richardson) | gap |
+|---|---|---|---|
+| `mu_DW` | −3075.25 (p = 3.18) | −3075.251 (p = 2.48) | **~1e-6** |
+| `comb_frac` | 0.854518 | 0.853371 | 0.13% |
+| `U_mean_w` | 0.193275 | 0.191299 | 1.03% |
+| `P_peak_w` | ~235.5 (non-monotone) | 232.809 (p = 2.31) | ~1.2% |
+
+The spectral-position observable agrees to a part in a million — strong evidence
+the dispersion, detuning and mode-index conventions are all correct. The
+energy-like observables retain a ~1% gap that refinement on either side does not
+close. That gap is a real, open discrepancy, not a discretization artifact, and
+it is the thing a cross-check should now be pointed at. The leading candidate is
+the nonlinear-step rule: pyLLE uses **endpoint-trapezoidal**
+`exp((NL(A0)+NL(A_iter))·dt/2)` iterated to a fixed point, ours uses **midpoint**
+`exp(i·γ|E_half|²·dt_sub)`; both are O(dt²) with different error constants.
+
+Note also that pyLLE's `P_peak` sequence is itself **non-monotone** at the finest
+steps (235.44 → 235.55), so its own limit is not cleanly established; the
+conservative band is 0.85%. Its well-conditioned observables (`mu_DW`,
+`U_mean_w`, `comb_frac`) do converge with clean observed orders.
+
+**Disagreement with the reference values quoted in the task brief, reported
+rather than reconciled.** The brief cites a NumPy transcription giving
+`dt=1 → 237.38`, `dt=0.5 → 233.42`, `dt=0.25 → 233.81 W`. Measured here (tight):
+**240.14, 237.45, 235.44**, i.e. consistently 1.2–4.0 W higher. Nothing was
+adjusted to close this. The most likely cause is patch 0003: the brief's
+transcription presumably reads the field at the unpatched probe position
+(29.9328 κ) whereas every number above is at 30.0000 κ, and a lower detuning
+gives a lower peak. That is a hypothesis, not a measurement.
+
+## 4. Picard iteration count at the default tolerance
+
+**Mean 2.00, max 2, at every one of the 5000 steps** for `dt = 1, tol = 1e-2` —
+reproducing the `{2: 5000}` histogram quoted in the brief.
+
+The decisive observation is what happens to that count as `dt` shrinks at fixed
+loose tolerance: **2.00 → 2.00 → 2.00 → 1.00**. It goes *down*. A criterion
+measuring local truncation error would demand *more* work per step as the scheme
+is refined toward an exact solve. This one demands less, because
+`‖A_prop − A_half‖ / ‖A_half‖ < tol` measures **how much the field changed over
+this round trip**, and a shorter step changes it less. At `dt = 0.125` the very
+first iterate already passes. The upstream default is therefore not a convergence
+criterion at all; it is a step-size-dependent activity test, and it silently
+becomes weaker exactly when the user is trying to make the answer better.
+
+At `tol = 1e-8` the count behaves correctly — 8.72 → 5.50 → 4.00 → 3.70, falling
+gently as the step shrinks and the initial guess improves, which is what a real
+convergence criterion does.
+
+## 5. The probe off-by-24 and the detuning mismatch
+
+`SaveStatus_CallBack` fires on `it*num_probe/Nt > probe` (:232-242), which never
+triggers on the final step. With `Tscan = 5000` and `num_probe = 200` the last
+probe is written at round trip **4976 of 5000** — 24 steps early. The returned
+field therefore sat at **δω = 29.9328 κ** while our field sat at **30.0000 κ**:
+the committed cross-check was comparing two solitons at different detunings, and
+attributing the difference to the codes.
+
+Patch 0003 overwrites only the final probe slot with the true end-of-run state.
+After it, `detuning_pylle_final` is exactly **30.000000 κ** at every one of the
+eight levels above.
+
+This is small but not negligible: 0.0672 κ of detuning at a point where
+`dP_peak/dδω` is steep. It is also exactly the class of error that no amount of
+tolerance-tuning would ever have surfaced — the two codes were solving slightly
+different problems.
+
+## 6. What this does and does not change
+
+It does not change any committed number in `pylle_crosscheck.json`; that run
+stands as a record of upstream-default pyLLE against our default solver.
+
+It does change what a future cross-check should do: run pyLLE refined, compare
+limits rather than defaults, and treat the residual ~1% energy-observable gap as
+the finding rather than as noise. The claim that "sub-2% cross-code agreement is
+not attainable by either code" is withdrawn — it is attainable for `mu_DW` and
+`comb_frac`, and the reason it is not yet attained for `P_peak` and `U_mean_w`
+is an open question rather than a known limitation.
