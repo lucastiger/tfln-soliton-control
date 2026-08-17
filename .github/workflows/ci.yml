@@ -38,11 +38,20 @@ jobs:
     name: fast (py${{ matrix.python-version }})
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    # The suite takes ~8 min on 3.10/3.11 but 41 min on 3.12, where the resolver
+    # picks jax 0.11.1 (0.10.2 caps at <3.12). Same work, ~5x the wall time, so
+    # the ceiling is generous rather than tight -- but present, so a hang costs
+    # an hour instead of the six-hour default.
+    timeout-minutes: 75
     strategy:
       # One version failing is information about that version; cancelling the
       # others throws that information away.
       fail-fast: false
       matrix:
+        # 3.10 resolves to jax 0.6.2 and 3.12 to jax 0.11.1, because jax 0.10.2
+        # -- the version the goldens were made with -- requires >=3.11,<3.12.
+        # That spread is the point of this job: three interpreters, three jax
+        # majors, and the functional suite must pass on all of them.
         python-version: ["3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
@@ -63,13 +72,50 @@ jobs:
       # No torch: the base install does not have it, and conftest.py drops the
       # two torch-only test modules from collection. That is the configuration a
       # benchmark user actually gets, so it is the one CI checks.
+      #
+      # --skip-hardware-locked because this job asks a FUNCTIONAL question --
+      # does the benchmark still work on a current stack -- and byte-identity is
+      # not part of the answer. Asserting both at once was a category error in
+      # the first version of this workflow: it ran comparisons against committed
+      # artifacts under deliberately floating dependencies, so a jax release
+      # turned the whole matrix red for a rounding difference. Byte-identity has
+      # its own job below, and its own environment requirements.
+      # See HARDWARE_LOCKED_NODE_IDS in conftest.py.
       - name: pytest (fast)
-        run: pytest -q -m "not slow and not gpu"
+        run: pytest -q -m "not slow and not gpu" --skip-hardware-locked
 
   identity:
-    name: identity (0 ULP, pinned toolchain)
+    name: identity (pinned toolchain; 0 ULP informational)
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    # WHAT THIS JOB CAN AND CANNOT PROVE
+    #
+    # It was written to assert 0-ULP identity against the committed goldens on a
+    # pinned toolchain. The first run disproved the premise. With jax 0.10.2 /
+    # jaxlib 0.10.2 / numpy 2.4.6 / python 3.11.15 -- byte-for-byte the versions
+    # in tests/data/golden/*.provenance.json -- the comparison still failed, at
+    # max_abs_diff 6.2e-19 and max_rel_diff 1.8e-13. The same command passes at
+    # 0 ULP on the machine that wrote the goldens.
+    #
+    # Pinning the toolchain is therefore necessary but not sufficient: XLA
+    # reassociates reductions to fit the CPU it is compiled for, so a runner with
+    # a different SIMD width returns a different, equally correct rounding.
+    # GitHub-hosted runners do not offer a fixed CPU, so 0 ULP is not available
+    # here at any pin.
+    #
+    # What this job does instead, in two steps:
+    #   1. BLOCKING -- the noise-off regression at the repo's own tolerance
+    #      (ATOL 1e-13) on the pinned toolchain. The observed hardware drift is
+    #      ~6 orders below that, so this still fails on any real physics
+    #      regression while tolerating the rounding a shared runner imposes.
+    #   2. INFORMATIONAL -- the strict 0-ULP comparison, allowed to fail, purely
+    #      to keep the drift magnitude in the log. If step 2 ever starts passing
+    #      the runner fleet became homogeneous; if its numbers grow by orders of
+    #      magnitude, look at step 1 before blaming hardware.
+    #
+    # True 0-ULP verification is a fixed-hardware activity. Run it on the
+    # reference machine, or in the Docker image on that machine:
+    #     SOLITON_STRICT_ULP=1 pytest tests/test_noise_off_identity.py -q
     steps:
       - uses: actions/checkout@v4
 
@@ -97,16 +143,23 @@ jobs:
       - name: Report the toolchain actually installed
         run: pip freeze | grep -E "^(jax|jaxlib|numpy|scipy)=="
 
-      # NOTE: the large-grid golden cases (n_tau >= SLOW_N_TAU,
-      # tests/test_noise_off_identity.py:83) carry the `slow` marker and are
-      # therefore SKIPPED here -- this run compares 12 cases at 0 ULP and skips
-      # 4. That is deliberate for per-PR CI, but it does leave the s1024 goldens
-      # unchecked at 0 ULP by any job: the weekly `slow` job runs on floating
-      # versions, where strict ULP would fail on ordinary toolchain drift rather
-      # than on a defect. To close the gap by hand on the pinned toolchain:
+      # BLOCKING. Tolerance mode (ATOL 1e-13, the module's default). Catches a
+      # physics regression; tolerates the ~6e-19 hardware rounding above.
       #
-      #     SOLITON_STRICT_ULP=1 pytest tests/test_noise_off_identity.py -q --runslow
-      - name: 0-ULP noise-off identity
+      # NOTE: the large-grid cases (n_tau >= SLOW_N_TAU,
+      # tests/test_noise_off_identity.py:83) carry the `slow` marker and are
+      # skipped here -- 12 cases compared, 4 skipped. On the pinned toolchain,
+      # add --runslow to include them.
+      - name: Noise-off regression on the pinned toolchain
+        run: pytest tests/test_noise_off_identity.py -q
+
+      # INFORMATIONAL ONLY -- continue-on-error is deliberate and is explained
+      # in the job comment above. This step is expected to fail on a
+      # GitHub-hosted runner; it runs so the ULP drift is recorded in the log
+      # rather than being invisible. Do NOT make it blocking without first
+      # giving the job a fixed CPU.
+      - name: 0-ULP identity (informational; expected to fail off-reference hardware)
+        continue-on-error: true
         env:
           SOLITON_STRICT_ULP: "1"
         run: pytest tests/test_noise_off_identity.py -q
@@ -129,5 +182,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
+      # --skip-hardware-locked for the same reason as the `fast` job: this also
+      # runs on a shared runner, so the byte comparisons against committed
+      # artifacts cannot pass here. Without it this job would report failure
+      # every Sunday for a 1e-19 rounding difference and be ignored within a
+      # month.
       - name: pytest (including slow)
-        run: pytest -q --runslow
+        run: pytest -q --runslow --skip-hardware-locked

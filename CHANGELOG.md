@@ -11,7 +11,30 @@ regenerated fixtures named — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- The `fast` CI job now passes `--skip-hardware-locked`, and the `identity` job
+  runs its 0-ULP comparison as an informational step with the tolerance
+  comparison as the blocking one. Both follow from a measurement made by the
+  first CI run: **the golden trajectories are reproducible bit-for-bit only on
+  the hardware that produced them.** On a runner with the goldens' exact
+  toolchain (`version_mismatch=None`) the comparison differed by
+  `max_abs_diff = 6.2e-19` / `max_rel_diff = 1.8e-13`, because XLA reassociates
+  reductions to fit the CPU it compiles for. That is ~6 orders of magnitude
+  below the repo's own ATOL of 1e-13, so no physics claim is affected — but the
+  *byte-level* claim is now known to be scoped to source × toolchain × hardware,
+  where previously only the first two were documented. See
+  [CONTRIBUTING.md](CONTRIBUTING.md#bit-identity-is-scoped-to-hardware-not-just-to-versions).
+
+  `--skip-hardware-locked` is **off by default**: an ordinary `pytest` run on
+  the reference machine still asserts every byte comparison.
+
+### Added
+
+- `conftest.HARDWARE_LOCKED_NODE_IDS` — the six test functions (eight node IDs)
+  that compare solver output byte-for-byte against a committed artifact, with
+  the evidence for why a shared runner cannot satisfy them. Guarded by
+  `tests/test_packaging_metadata.py` so a rename cannot silently empty the list.
 
 ## [1.0.0] — 2026-08-17
 

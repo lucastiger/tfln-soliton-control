@@ -132,12 +132,72 @@ def toolchain_versions() -> dict[str, str]:
     return _toolchain_versions()
 
 
+# ---------------------------------------------------------------------------
+# Hardware-locked byte comparisons
+# ---------------------------------------------------------------------------
+# These tests assert that solver output is BYTE-IDENTICAL to an artifact
+# committed to the repository. They are correct and they are worth having. They
+# are also only satisfiable on the machine that produced the artifact.
+#
+# The evidence, from the first CI run of this workflow (PR #83):
+#
+#   * On python 3.11 with jax 0.10.2 / jaxlib 0.10.2 / numpy 2.4.6 -- the exact
+#     toolchain recorded in tests/data/golden/*.provenance.json, reported by the
+#     suite itself as `version_mismatch=None` --
+#     test_euler_default_bit_identical still failed, 266155 elements differing.
+#   * The `identity` job, on that same pinned toolchain, failed at 0 ULP with
+#     max_abs_diff = 6.2e-19 and max_rel_diff = 1.8e-13.
+#   * The same tests pass at 0 ULP on the machine the goldens came from.
+#
+# Same versions, same source, different bytes: XLA vectorises and reassociates
+# reductions according to the CPU it finds, so a runner with different SIMD
+# width produces a different -- equally valid -- rounding of the same
+# computation. Bit-identity is a property of (source x toolchain x HARDWARE),
+# and the third factor is not something a shared CI runner supplies.
+#
+# The differences are ~6 orders of magnitude below the repo's own tolerance
+# (observed 6.2e-19 against ATOL 1e-13), so the physics is untouched; what fails
+# is only the byte-level claim.
+#
+# Hence this flag, used by the `fast` CI job. It changes nothing by default:
+# locally, on the reference machine, these tests run and must pass. Note that
+# test_all_off_bit_identical_to_golden is deliberately NOT in this list -- in
+# its default tolerance mode it passes everywhere, and it only turns strict
+# under SOLITON_STRICT_ULP=1, so it keeps guarding the noise-off path in CI.
+#
+# Node IDs are matched by prefix, so parametrised cases are covered.
+# tests/test_packaging_metadata.py checks that every entry still names a real
+# test, so a rename cannot silently empty this list.
+HARDWARE_LOCKED_NODE_IDS: tuple[str, ...] = (
+    # vs tests/data/golden/*.npz, compare_to_golden(..., strict=True)
+    "tests/test_thermal_integrator.py::test_euler_default_bit_identical",
+    # vs tests/data/lle_singlestep_legacy_128.npy, np.array_equal
+    "tests/test_dispersion_grid.py::test_n_substeps_1_matches_legacy_single_step",
+    "tests/test_dispersion_grid.py::test_antialiasing_toggles_off_are_bit_identical",
+    "tests/test_dispersion_grid.py::test_dispersion_validity_mask_off_identical_on_changes",
+    "tests/test_dispersion_grid.py::test_fine_cadence_M1_identical_M_gt1_changes",
+    # sha256 of a full solver trajectory
+    "tests/test_regression_figures.py::test_default_path_golden_hash",
+)
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--runslow",
         action="store_true",
         default=False,
         help="run tests marked @pytest.mark.slow (skipped by default)",
+    )
+    parser.addoption(
+        "--skip-hardware-locked",
+        action="store_true",
+        default=False,
+        help=(
+            "skip the byte-comparisons against committed artifacts "
+            "(HARDWARE_LOCKED_NODE_IDS). For CI on shared runners, whose CPU is "
+            "not the one the artifacts were generated on. Off by default: on the "
+            "reference machine these tests run and must pass."
+        ),
     )
 
 
@@ -167,6 +227,18 @@ def pytest_collection_modifyitems(
         for item in items:
             if "pylle_full" in item.keywords:
                 item.add_marker(skip_pylle)
+
+    # Byte-comparisons against committed artifacts, skipped only when asked.
+    # See HARDWARE_LOCKED_NODE_IDS above for why a shared runner cannot satisfy
+    # them and why that is not a physics failure.
+    if config.getoption("--skip-hardware-locked"):
+        skip_hw = pytest.mark.skip(
+            reason="byte-identical to a committed artifact; only reproducible on "
+                   "the hardware that produced it (--skip-hardware-locked)"
+        )
+        for item in items:
+            if item.nodeid.startswith(HARDWARE_LOCKED_NODE_IDS):
+                item.add_marker(skip_hw)
 
     if config.getoption("--runslow"):
         return

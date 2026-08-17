@@ -466,6 +466,99 @@ def test_ci_workflow_has_the_four_jobs() -> None:
     assert "--runslow" in yaml.dump(workflow["jobs"]["slow"])
 
 
+def _conftest_module():
+    sys.path.insert(0, str(REPO_ROOT))
+    try:
+        import conftest
+    finally:
+        sys.path.remove(str(REPO_ROOT))
+    return conftest
+
+
+def test_every_hardware_locked_id_still_names_a_real_test() -> None:
+    """A rename must not silently empty the skip list.
+
+    ``--skip-hardware-locked`` matches node IDs by prefix. A stale entry matches
+    nothing and fails silently -- the CI job would go on passing while the test
+    it was meant to exclude either ran (and failed) or, worse, had been renamed
+    and was quietly excluded by a different stale prefix. So each entry is
+    checked against the source: the file exists, and it defines that function.
+    """
+    for node_id in _conftest_module().HARDWARE_LOCKED_NODE_IDS:
+        rel_path, _, func = node_id.partition("::")
+        path = REPO_ROOT / rel_path
+        assert path.is_file(), f"{node_id} names a file that does not exist: {rel_path}"
+
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        defined = {
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        assert func in defined, (
+            f"{node_id} names a test that {rel_path} no longer defines. Update "
+            "conftest.HARDWARE_LOCKED_NODE_IDS -- a stale prefix silently "
+            "excludes nothing, and the `fast` CI job would keep reporting green."
+        )
+
+
+def test_hardware_locked_skipping_is_off_by_default() -> None:
+    """The reference machine must still run these; only CI opts out.
+
+    This is the constraint the whole mechanism hangs on. If the default ever
+    flips, byte-identity stops being checked anywhere at all and the repo's
+    central claim quietly becomes unverified.
+    """
+    workflow_text = WORKFLOW.read_text(encoding="utf-8")
+    assert "--skip-hardware-locked" in workflow_text, (
+        "the fast job no longer skips the hardware-locked comparisons; it will "
+        "go red on any runner whose CPU differs from the goldens' machine"
+    )
+
+    conftest_text = (REPO_ROOT / "conftest.py").read_text(encoding="utf-8")
+    option_block = conftest_text.split('"--skip-hardware-locked"')[1][:400]
+    assert "default=False" in option_block, (
+        "--skip-hardware-locked must default to False so a plain `pytest` run on "
+        "the reference machine still asserts byte-identity"
+    )
+
+
+def test_identity_job_does_not_claim_blocking_zero_ulp() -> None:
+    """0 ULP is informational here, and the workflow must say why.
+
+    Measured on a GitHub runner with the goldens' exact toolchain
+    (version_mismatch=None): max_abs_diff 6.2e-19, max_rel_diff 1.8e-13. Same
+    versions, different CPU, different bytes. If someone makes the strict step
+    blocking again without pinning the hardware, the job reverts to failing
+    permanently for a rounding difference.
+    """
+    yaml = pytest.importorskip("yaml")
+    identity = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"]["identity"]
+
+    strict_steps = [
+        step for step in identity["steps"]
+        if str(step.get("env", {}).get("SOLITON_STRICT_ULP", "")) == "1"
+    ]
+    assert strict_steps, "the strict 0-ULP step disappeared entirely"
+    for step in strict_steps:
+        assert step.get("continue-on-error") is True, (
+            "the SOLITON_STRICT_ULP=1 step is blocking again. It cannot pass on a "
+            "shared runner -- see the comment block on the identity job. Give the "
+            "job fixed hardware before making this blocking."
+        )
+
+    # ...and something unconditional must still guard the noise-off path.
+    blocking = [
+        step for step in identity["steps"]
+        if "test_noise_off_identity" in str(step.get("run", ""))
+        and not step.get("continue-on-error")
+    ]
+    assert blocking, (
+        "no blocking noise-off check remains; the pinned-toolchain job would "
+        "assert nothing"
+    )
+
+
 def test_readme_carries_the_ci_badge() -> None:
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     assert "workflows/ci.yml/badge.svg" in readme

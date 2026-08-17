@@ -114,6 +114,15 @@ SOLITON_STRICT_ULP=1 pytest tests/test_noise_off_identity.py -q
 `environment.yml` is a conda convenience and is explicitly *not* the
 bit-identity environment — see the caveat in its header.
 
+> **Bit-identity needs fixed hardware, not just pinned versions.** On a CI
+> runner carrying the goldens' exact toolchain (jax/jaxlib 0.10.2, numpy 2.4.6,
+> python 3.11.15) the comparison still differs by `max_abs_diff = 6.2e-19`,
+> because XLA reassociates reductions to suit the CPU it compiles for. The same
+> command reproduces at 0 ULP on the machine that wrote the goldens. Treat
+> `SOLITON_STRICT_ULP=1` as a fixed-hardware check, and quote the hardware
+> alongside the versions in any reproducibility claim. Details in
+> [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
 ### Tests
 
 ```bash

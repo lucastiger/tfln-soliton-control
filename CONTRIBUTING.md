@@ -50,6 +50,41 @@ That test is the arbiter, not your judgement or mine.
    hash-pinned in `FROZEN_MANIFEST.md` and `tests/test_validation_freeze.py`
    will tell you. Regenerate deliberately and record it.
 
+### Bit-identity is scoped to hardware, not just to versions
+
+Measured, not assumed. On a GitHub-hosted runner with jax 0.10.2, jaxlib 0.10.2,
+numpy 2.4.6 and python 3.11.15 — byte-for-byte the toolchain in
+`tests/data/golden/*.provenance.json`, with the suite itself reporting
+`version_mismatch=None` — the goldens still did not reproduce:
+
+```
+max_abs_diff = 6.2e-19    max_rel_diff = 1.8e-13    266155 elements differ
+```
+
+The same command passes at 0 ULP on the machine that wrote the goldens. XLA
+vectorises and reassociates reductions to suit the CPU it compiles for, so a
+different SIMD width gives a different — equally correct — rounding of the same
+arithmetic.
+
+So the reproducibility claim is **source × toolchain × hardware**, and the
+`requirements.lock.txt` pin fixes only the middle term. Consequences:
+
+- `SOLITON_STRICT_ULP=1` is a **fixed-hardware** check. Run it on the reference
+  machine (or in the Docker image on that machine). It is not something CI on
+  shared runners can give you, at any pin.
+- The `identity` CI job runs the noise-off comparison at the repo's tolerance
+  (ATOL 1e-13) as its blocking check, and the strict 0-ULP comparison as an
+  informational step that is allowed to fail. The observed hardware drift is
+  ~6 orders of magnitude below that tolerance, so a real physics regression
+  still fails the blocking step.
+- The `fast` job passes `--skip-hardware-locked`, which skips the byte
+  comparisons listed in `conftest.HARDWARE_LOCKED_NODE_IDS`. That flag is **off
+  by default**: a plain `pytest` on the reference machine still asserts every
+  one of them, and must pass.
+
+If you are recording a reproducibility claim for the paper, state the hardware.
+"jaxlib 0.10.2" is not sufficient to reproduce these bytes.
+
 ### Dependency bumps are output changes
 
 jaxlib ships XLA, and XLA may change reduction order and kernel fusion between
