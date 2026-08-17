@@ -941,6 +941,30 @@ def _dw_failure_dump(out_dir, cav, dw, n_tau, cfgp, mu, mean_lin, spec_off,
 # ---------------------------------------------------------------------------
 # Workstream 2 -- Monte-Carlo soliton staircase
 # ---------------------------------------------------------------------------
+def level_crossing(dw_desc, count, k):
+    """Detuning at which ``count`` first drops to <= ``k``, scanning the sweep.
+
+    The soliton-step SWITCHING DETUNING estimator used by W2 (and reused by
+    ``analysis/noise_budget.py`` for its step-jitter observable). ``dw_desc`` is
+    the sweep's detuning grid in sweep order (warm continuation runs DOWNWARD,
+    so it is descending) and ``count`` the per-step soliton count.
+
+    Why a level crossing rather than an exact (n_high, n_low) transition match:
+    a coarse warm-continuation grid merges adjacent annihilations (5->3 instead
+    of 5->4->3), so exact matching is fragile and low-N. The boundary "detuning
+    at which the count first drops to <= k" is well-defined for EVERY level k
+    regardless of merging, giving one matched boundary per level per
+    realization -- so the ensemble mean is a bias and the per-seed std is a
+    jitter, which is exactly the bias-vs-jitter split W2 reports.
+
+    Returns ``None`` when the count never reaches ``k`` in the record, so a
+    realization that never got there is DROPPED rather than contributing an
+    edge-of-grid value that would masquerade as a measured crossing.
+    """
+    below = np.where(np.asarray(count) <= k)[0]
+    return float(dw_desc[below[0]]) if below.size else None
+
+
 def workstream2(out_dir, seeds, quick):
     """Deterministic reference staircase + full-stack ON ensemble, identical schedule."""
     # Production mirrors the committed staircase (analysis/results/detuning_sweep.npz:
@@ -1002,23 +1026,14 @@ def workstream2(out_dir, seeds, quick):
     success_rate = float(np.mean(ens_single)) if ens_single else float("nan")
 
     # --- step-location bias vs jitter via ROBUST LEVEL-CROSSINGS ---
-    # A coarse warm-continuation grid merges adjacent annihilations (5->3 instead
-    # of 5->4->3), so exact (n_high, n_low) matching is fragile and low-N. The
-    # soliton-number boundary "detuning at which the count first drops to <= k",
-    # scanning down the sweep, is well-defined for EVERY level k regardless of
-    # merging, giving one matched boundary per level per realization. Bias is the
-    # ensemble-mean offset from the deterministic boundary; jitter is the per-seed
-    # std -- exactly the jitter-vs-bias split the prompt asks for.
-    def _level_crossing(dw_desc, count, k):
-        below = np.where(np.asarray(count) <= k)[0]
-        return float(dw_desc[below[0]]) if below.size else None
-
+    # See :func:`level_crossing` for why the estimator is a level crossing rather
+    # than an exact (n_high, n_low) transition match.
     level_rows = []
     for k in range(int(swp["n_solitons"]) - 1, -1, -1):
-        det_cross = _level_crossing(det_k, det_count, k)
+        det_cross = level_crossing(det_k, det_count, k)
         if det_cross is None:
             continue
-        on_cross = [x for x in (_level_crossing(det_k, c, k) for c in ens_counts)
+        on_cross = [x for x in (level_crossing(det_k, c, k) for c in ens_counts)
                     if x is not None]
         if len(on_cross) < 2:
             continue

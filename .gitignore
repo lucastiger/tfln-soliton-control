@@ -13,3 +13,11 @@ data/synthetic/
 
 # OS metadata (macOS Finder writes these into any directory it browses)
 .DS_Store
+
+# Noise-budget resume checkpoint (analysis/noise_budget.py). Rewritten after
+# EVERY solver unit so a crash costs one unit instead of the whole run, which
+# makes it a working file, not a result: it holds the raw per-seed observables
+# for the run currently in progress, and --resume reads it back. The budget
+# ITSELF (budget.json / .npz / .provenance.json / budget_table.*) is a result
+# and stays tracked.
+analysis/results/budget/budget_raw.json
