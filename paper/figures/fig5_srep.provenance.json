@@ -1,0 +1,43 @@
+{
+  "figure_id": "fig5_srep",
+  "status": "built",
+  "description": "S_rep overlay per channel with the TRN(K-G)+FSR limit",
+  "builder": "__main__.build_fig5_srep",
+  "recompute": false,
+  "outputs": [
+    "paper/figures/fig5_srep.pdf",
+    "paper/figures/fig5_srep.png"
+  ],
+  "input_artifacts": [
+    {
+      "path": "analysis/results/budget/budget.json",
+      "present": true,
+      "sha256": "30eaef54c2393f849819eca67cbf982e6088c2255badb7ef091b52101c23a674",
+      "bytes": 324759,
+      "mtime_utc": "2026-08-17T07:38:45Z"
+    },
+    {
+      "path": "analysis/results/validation/campaign_report.json",
+      "present": true,
+      "sha256": "4cdd5ae030269acecb80adca469ae047fca38f8b36cdda5b2c1a426b8b45b388",
+      "bytes": 24098,
+      "mtime_utc": "2026-08-17T06:19:04Z"
+    }
+  ],
+  "missing_panels": {},
+  "notes": {
+    "trn_limit_srep_at_1e6hz": 8.615159891020493e-08,
+    "srep_quantum_limited_floor": 0.032607282395795203,
+    "fig5_sets_plotted": 5
+  },
+  "git_commit": "ffb6981397d2",
+  "environment": {
+    "python": "3.11.15",
+    "platform": "Linux-6.18.5-fc-v20-x86_64-with-glibc2.39",
+    "numpy": "2.4.6",
+    "matplotlib": "3.11.1",
+    "jax": "0.10.2"
+  },
+  "generated_utc": "2026-08-17T09:12:41Z",
+  "generator": "scripts/make_paper_figures.py"
+}

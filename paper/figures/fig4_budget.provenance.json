@@ -1,0 +1,64 @@
+{
+  "figure_id": "fig4_budget",
+  "status": "partial",
+  "description": "grouped bars, 5 observables x channel sets, log axis, error bars",
+  "builder": "__main__.build_fig4_budget",
+  "recompute": false,
+  "outputs": [
+    "paper/figures/fig4_budget.pdf",
+    "paper/figures/fig4_budget.png"
+  ],
+  "input_artifacts": [
+    {
+      "path": "analysis/results/budget/budget.json",
+      "present": true,
+      "sha256": "30eaef54c2393f849819eca67cbf982e6088c2255badb7ef091b52101c23a674",
+      "bytes": 324759,
+      "mtime_utc": "2026-08-17T07:38:45Z"
+    }
+  ],
+  "missing_panels": {
+    "fig4_timing_jitter": "no resolved cell in this budget run",
+    "fig4_step_jitter": "all cells are 0 (log axis cannot show zero)"
+  },
+  "notes": {
+    "budget_quick": true,
+    "budget_seeds": 2,
+    "fig4_observables": [
+      "u_int_rms_frac",
+      "s_rep",
+      "line_linewidth",
+      "timing_jitter",
+      "step_jitter"
+    ],
+    "fig4_channel_sets": [
+      "all_off",
+      "quantum",
+      "trn",
+      "pyro_eo",
+      "fsr",
+      "dT_family",
+      "pump_fn",
+      "pump_rin",
+      "all_on",
+      "loo_quantum",
+      "loo_dT_family",
+      "loo_pump_fn",
+      "loo_pump_rin"
+    ],
+    "fig4_empty_groups": {
+      "timing_jitter": "no resolved cell in this budget run",
+      "step_jitter": "all cells are 0 (log axis cannot show zero)"
+    }
+  },
+  "git_commit": "ffb6981397d2",
+  "environment": {
+    "python": "3.11.15",
+    "platform": "Linux-6.18.5-fc-v20-x86_64-with-glibc2.39",
+    "numpy": "2.4.6",
+    "matplotlib": "3.11.1",
+    "jax": "0.10.2"
+  },
+  "generated_utc": "2026-08-17T09:12:41Z",
+  "generator": "scripts/make_paper_figures.py"
+}

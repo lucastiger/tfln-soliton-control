@@ -1,0 +1,49 @@
+{
+  "figure_id": "fig2_numerics",
+  "status": "built",
+  "description": "(a) TRN AR(1) burn-in before/after (b) vacuum floor vs n_tau (c) Euler vs exponential thermal at dt/tau = 2.1",
+  "builder": "__main__.build_fig2_numerics",
+  "recompute": true,
+  "outputs": [
+    "paper/figures/fig2_numerics.pdf",
+    "paper/figures/fig2_numerics.png"
+  ],
+  "input_artifacts": [
+    {
+      "path": "analysis/results/validation/trn_burnin.npz",
+      "present": true,
+      "sha256": "24ea05220efae8ecd3306ad66c3a2115589b81979ec93641b2fc57addb3d9ba5",
+      "bytes": 7956,
+      "mtime_utc": "2026-08-13T23:18:12Z"
+    }
+  ],
+  "missing_panels": {},
+  "notes": {
+    "fig2a_t_slow": [
+      1000.0,
+      3000.0,
+      10000.0,
+      30000.0,
+      100000.0,
+      300000.0
+    ],
+    "fig2b_occupancy": {
+      "128": 0.5521184083407706,
+      "256": 0.5300896813068119,
+      "512": 0.49318196958267274,
+      "1024": 0.48252487143294787
+    },
+    "fig2c_euler_amplification": 1.1,
+    "fig2c_euler_diverges": true
+  },
+  "git_commit": "ffb6981397d2",
+  "environment": {
+    "python": "3.11.15",
+    "platform": "Linux-6.18.5-fc-v20-x86_64-with-glibc2.39",
+    "numpy": "2.4.6",
+    "matplotlib": "3.11.1",
+    "jax": "0.10.2"
+  },
+  "generated_utc": "2026-08-17T09:12:39Z",
+  "generator": "scripts/make_paper_figures.py"
+}

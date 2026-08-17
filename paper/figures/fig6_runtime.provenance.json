@@ -1,0 +1,48 @@
+{
+  "figure_id": "fig6_runtime",
+  "status": "partial",
+  "description": "ns/round-trip/mode vs n_tau, CPU + GPU, n log n reference",
+  "builder": "__main__.build_fig6_runtime",
+  "recompute": false,
+  "outputs": [
+    "paper/figures/fig6_runtime.pdf",
+    "paper/figures/fig6_runtime.png"
+  ],
+  "input_artifacts": [
+    {
+      "path": "benchmarks/runtime.json",
+      "present": true,
+      "sha256": "faa4a4d9728f10d04e9c05fc41b5f6db8b571f0dc23de7282d85b967f5c175bc",
+      "bytes": 107229,
+      "mtime_utc": "2026-08-17T08:43:00Z"
+    }
+  ],
+  "missing_panels": {
+    "fig6_gpu": "no GPU backend on the machine that produced benchmarks/runtime.json; re-run the benchmark on a GPU host to add that curve"
+  },
+  "notes": {
+    "fig6_slices": {
+      "cpu/all_off": "t_slow=1000, n_traj=1",
+      "cpu/all_on": "t_slow=1000, n_traj=1"
+    },
+    "fig6_reference_anchor_n_tau": 256,
+    "fig6_scaling_fits": {
+      "cpu/all_off": 0.8192169941233065,
+      "cpu/all_on": 0.5856399044127827
+    },
+    "fig6_hardware": "CPU Intel(R) Xeon(R) Processor @ 2.80GHz",
+    "fig6_backends_absent": [
+      "gpu"
+    ]
+  },
+  "git_commit": "ffb6981397d2",
+  "environment": {
+    "python": "3.11.15",
+    "platform": "Linux-6.18.5-fc-v20-x86_64-with-glibc2.39",
+    "numpy": "2.4.6",
+    "matplotlib": "3.11.1",
+    "jax": "0.10.2"
+  },
+  "generated_utc": "2026-08-17T09:12:42Z",
+  "generator": "scripts/make_paper_figures.py"
+}
