@@ -1,0 +1,46 @@
+{
+  "figure_id": "fig3_pylle",
+  "status": "built",
+  "description": "spectrum + waveform overlay with residual sub-panels",
+  "builder": "__main__.build_fig3_pylle",
+  "recompute": false,
+  "outputs": [
+    "paper/figures/fig3_pylle.pdf",
+    "paper/figures/fig3_pylle.png"
+  ],
+  "input_artifacts": [
+    {
+      "path": "validation/results/pylle_crosscheck_v2_fields.npz",
+      "present": true,
+      "sha256": "3526d0e90df08fbb21a3ded12662212fbfc9ece4839d7112fc98fa239c6ffce3",
+      "bytes": 1424624,
+      "mtime_utc": "2026-08-17T06:19:04Z"
+    },
+    {
+      "path": "validation/results/pylle_crosscheck_v2.json",
+      "present": true,
+      "sha256": "c3338a2f107a641000e7ca557301d54bfd96ba47a15ab5de51f66b2b5b769309",
+      "bytes": 116009,
+      "mtime_utc": "2026-08-17T06:19:04Z"
+    }
+  ],
+  "missing_panels": {},
+  "notes": {
+    "fig3_pair": {
+      "ours": "field_ours_n8",
+      "pylle": "field_pylle_dt1_tight"
+    },
+    "fig3_max_abs_spectral_residual_db": 8.43435866461894,
+    "fig3_peak_rel_waveform_residual": 0.6820800119835916
+  },
+  "git_commit": "ffb6981397d2",
+  "environment": {
+    "python": "3.11.15",
+    "platform": "Linux-6.18.5-fc-v20-x86_64-with-glibc2.39",
+    "numpy": "2.4.6",
+    "matplotlib": "3.11.1",
+    "jax": "0.10.2"
+  },
+  "generated_utc": "2026-08-17T09:12:39Z",
+  "generator": "scripts/make_paper_figures.py"
+}

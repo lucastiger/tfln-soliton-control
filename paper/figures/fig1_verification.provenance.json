@@ -1,0 +1,65 @@
+{
+  "figure_id": "fig1_verification",
+  "status": "partial",
+  "description": "(a) all-off ULP residual vs committed goldens (b) analytic-CW residual vs detuning (c) observed order of accuracy, 3 curves (d) weak order, noise on",
+  "builder": "__main__.build_fig1_verification",
+  "recompute": true,
+  "outputs": [
+    "paper/figures/fig1_verification.pdf",
+    "paper/figures/fig1_verification.png"
+  ],
+  "input_artifacts": [
+    {
+      "path": "tests/data/golden/s256_short.npz",
+      "present": true,
+      "sha256": "c293203be0525f846bf2384287893817d732bdbcc01cc28c94dd1ae2dc58e04c",
+      "bytes": 856338,
+      "mtime_utc": "2026-08-13T23:18:12Z"
+    },
+    {
+      "path": "tests/data/golden/s512_prod.npz",
+      "present": true,
+      "sha256": "cafcdbe0a4665d72ba556de19f988bd7619bf193c16890ead144a4107f88a899",
+      "bytes": 4185234,
+      "mtime_utc": "2026-08-13T23:18:12Z"
+    },
+    {
+      "path": "tests/data/golden/s512_sub4.npz",
+      "present": true,
+      "sha256": "7dc1943b86feb421911b8e9c0803fbe317fa3ad95576bdcd69960081a2cd2713",
+      "bytes": 4185234,
+      "mtime_utc": "2026-08-13T23:18:12Z"
+    },
+    {
+      "path": "tests/data/golden/s1024_near.npz",
+      "present": true,
+      "sha256": "6d1a7cab06e539cc011025247f9f910e3b3d3399133d314dad7e0d34d0fb81ba",
+      "bytes": 3326226,
+      "mtime_utc": "2026-08-13T23:18:12Z"
+    }
+  ],
+  "missing_panels": {
+    "fig1b": "no committed artifact; validation.analytic_cw.verify() is not run by default (pass --recompute-heavy)",
+    "fig1c": "no committed artifact; validation.convergence.deterministic_study() not run by default (pass --recompute-heavy)",
+    "fig1d": "no committed artifact; validation.convergence.weak_study() not run by default (pass --recompute-heavy)"
+  },
+  "notes": {
+    "fig1a_bitwise_identical": true,
+    "fig1a_max_ulp": {
+      "s256_short": 0.0,
+      "s512_prod": 0.0,
+      "s512_sub4": 0.0,
+      "s1024_near": 0.0
+    }
+  },
+  "git_commit": "ffb6981397d2",
+  "environment": {
+    "python": "3.11.15",
+    "platform": "Linux-6.18.5-fc-v20-x86_64-with-glibc2.39",
+    "numpy": "2.4.6",
+    "matplotlib": "3.11.1",
+    "jax": "0.10.2"
+  },
+  "generated_utc": "2026-08-17T09:12:30Z",
+  "generator": "scripts/make_paper_figures.py"
+}
