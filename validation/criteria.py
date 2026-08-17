@@ -578,7 +578,8 @@ def evaluate_gated(values: dict, tolset: ToleranceSet) -> list[dict]:
     return res
 
 
-def evaluate_existence_edges(values: dict, tolset: ToleranceSet) -> list[dict]:
+def evaluate_existence_edges(values: dict, tolset: ToleranceSet,
+                             *, discretization_u: dict | None = None) -> list[dict]:
     """G7: brackets, not points.
 
     PASSES iff the two brackets OVERLAP, or their midpoints agree within
@@ -586,6 +587,22 @@ def evaluate_existence_edges(values: dict, tolset: ToleranceSet) -> list[dict]:
     tightest surviving point -- on both sides, which is a biased estimator: it
     reports the edge as the last point that happened to survive rather than as
     the interval the bisection actually resolved.
+
+    ``discretization_u`` is an OPTIONAL ``{edge: U_disc}`` mapping in the same
+    units as the brackets (kappa), measured by refining the edge bisection over
+    a substep ladder -- see ``validation/existence_convergence.py``. G7 is the
+    only GATED criterion whose band was built from bracket half-widths alone,
+    i.e. with no discretization term at all, because the v2 existence bisection
+    ran at ``n_substeps = 1`` only. When supplied, the term enters in
+    quadrature exactly as the bracket half-widths do::
+
+        band = K * sqrt(hw_o^2 + hw_p^2 + u_o^2 + u_p^2 + U_disc^2)
+
+    **When it is None the result is bit-identical to the original**, which is
+    what keeps the frozen v2 artifact and the tolerance fingerprint valid; a
+    test asserts that. Supplying it is a measurement being added to the band,
+    never a tolerance being widened to obtain a pass: the value comes from
+    ``existence_convergence_ours.json`` and nowhere else.
     """
     out = []
     for edge in ("lower", "upper"):
@@ -593,9 +610,12 @@ def evaluate_existence_edges(values: dict, tolset: ToleranceSet) -> list[dict]:
         bp = values.get(f"existence_{edge}_bracket_pylle")
         u_o = values.get(f"existence_{edge}_u_ours", 0.0) or 0.0
         u_p = values.get(f"existence_{edge}_u_pylle", 0.0) or 0.0
+        u_disc = float((discretization_u or {}).get(edge) or 0.0)
         base = {"edge": edge, "bracket_ours": bo, "bracket_pylle": bp,
                 "u_ours": u_o, "u_pylle": u_p,
                 "coverage_factor": COVERAGE_FACTOR}
+        if u_disc:
+            base["u_discretization_ours"] = u_disc
         if not bo or not bp or len(bo) != 2 or len(bp) != 2:
             out.append(_result("G7", Verdict.NOT_MEASURED, **base))
             continue
@@ -604,7 +624,8 @@ def evaluate_existence_edges(values: dict, tolset: ToleranceSet) -> list[dict]:
         mid_o, mid_p = 0.5 * (lo_o + hi_o), 0.5 * (lo_p + hi_p)
         hw_o, hw_p = 0.5 * (hi_o - lo_o), 0.5 * (hi_p - lo_p)
         overlap = (lo_o <= hi_p) and (lo_p <= hi_o)
-        tol = COVERAGE_FACTOR * math.sqrt(hw_o ** 2 + hw_p ** 2 + u_o ** 2 + u_p ** 2)
+        tol = COVERAGE_FACTOR * math.sqrt(
+            hw_o ** 2 + hw_p ** 2 + u_o ** 2 + u_p ** 2 + u_disc ** 2)
         d = abs(mid_o - mid_p)
         ok = bool(overlap or d <= tol)
         out.append(_result("G7", Verdict.PASS if ok else Verdict.FAIL,

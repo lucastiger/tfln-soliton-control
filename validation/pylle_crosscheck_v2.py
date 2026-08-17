@@ -544,6 +544,64 @@ def spectral_containment(dbc: np.ndarray, mu: np.ndarray) -> dict:
     }
 
 
+def classify_field(field: np.ndarray, t_r: float, kappa: float,
+                   gamma: float) -> dict:
+    """Classify one final field, and record what the classifier saw.
+
+    ``is_single_soliton`` is a THRESHOLD test (contrast >= 5, exactly one
+    circular connected component above the half-way level), so near an existence
+    boundary it can flip on a small difference in a genuinely marginal state.
+    Returning the contrast and the peak count alongside the boolean is what makes
+    such a flip visible in the trace rather than invisible in a verdict.
+    """
+    from validation.pylle_crosscheck import is_single_soliton
+
+    ok, npk, contrast = is_single_soliton(field, t_r, kappa, gamma)
+    return {"single": bool(ok), "n_peaks": int(npk), "contrast": float(contrast),
+            "peak_power_w": float(np.max(np.abs(field) ** 2) / t_r)}
+
+
+def initial_brackets(survival, scan_values):
+    """Coarse-grid brackets straddling each existence edge.
+
+    Returns ``(lower, upper)`` where ``lower`` is ``(dead, alive)`` and ``upper``
+    is ``(alive, dead)``; either is ``None`` when the scan does not straddle that
+    edge. Pure function of the survival vector and the grid.
+    """
+    idx = [i for i, s in enumerate(survival) if s]
+    if not idx:
+        return None, None
+    i0, i1 = idx[0], idx[-1]
+    low = (scan_values[i0 - 1], scan_values[i0]) if i0 > 0 else None
+    high = (scan_values[i1], scan_values[i1 + 1]) if i1 + 1 < len(scan_values) else None
+    return low, high
+
+
+def update_bracket(bracket, midpoint: float, alive: bool, edge: str):
+    """One bisection step. ``edge`` is ``"lower"``/``"lo"`` or ``"upper"``/``"hi"``.
+
+    The lower bracket is ordered ``(dead, alive)`` and the upper ``(alive, dead)``,
+    so a surviving midpoint tightens the *alive* end in both cases -- which is
+    opposite ends of the tuple. Keeping that asymmetry in ONE function is why
+    this is shared rather than reimplemented per caller.
+    """
+    if bracket is None:
+        return None
+    if edge in ("lower", "lo"):
+        return (bracket[0], midpoint) if alive else (midpoint, bracket[1])
+    if edge in ("upper", "hi"):
+        return (midpoint, bracket[1]) if alive else (bracket[0], midpoint)
+    raise ValueError(f"edge must be lower/upper, got {edge!r}")
+
+
+def bracket_midpoint(bracket):
+    return None if bracket is None else 0.5 * (bracket[0] + bracket[1])
+
+
+def bracket_halfwidth(bracket):
+    return None if bracket is None else 0.5 * abs(bracket[1] - bracket[0])
+
+
 def _brackets_overlap(a, b) -> bool:
     """Do two closed intervals share any point? (Figure labelling only; the
     verdict itself is computed by ``criteria.evaluate_existence_edges``.)"""
@@ -755,9 +813,8 @@ def main(argv: list[str] | None = None) -> int:
                                             OBSERVABLE_DEFINITIONS, observables_v2,
                                             richardson, spectrum_dbc)
     from validation.pylle_crosscheck import (assert_round_trip, build_pylle_dispfile,
-                                             derived_config, is_single_soliton,
-                                             load_device, local_d2_from_dint,
-                                             ours_to_pylle)
+                                             derived_config, load_device,
+                                             local_d2_from_dint, ours_to_pylle)
 
     t_start = time.time()
     work = Path(args.work_dir) if args.work_dir else Path(tempfile.mkdtemp(prefix="xcheck2_"))
@@ -997,10 +1054,7 @@ def main(argv: list[str] | None = None) -> int:
           f"both codes", flush=True)
 
     def classify(field: np.ndarray) -> dict:
-        ok, npk, contrast = is_single_soliton(field, t_r, kappa,
-                                              dev["gamma_LLE_per_J_per_s"])
-        return {"single": bool(ok), "n_peaks": int(npk), "contrast": float(contrast),
-                "peak_power_w": float(np.max(np.abs(field) ** 2) / t_r)}
+        return classify_field(field, t_r, kappa, dev["gamma_LLE_per_J_per_s"])
 
     def seed_at(dw: float) -> np.ndarray:
         return soliton_seed(n_modes, dw, kappa, dev["kappa_c_rad_per_s"],
@@ -1063,17 +1117,8 @@ def main(argv: list[str] | None = None) -> int:
     surv_ours = [p["ours"]["single"] for p in scan_points]
     surv_pylle = [p["pylle"]["single"] for p in scan_points]
 
-    def brackets(surv):
-        idx = [i for i, s in enumerate(surv) if s]
-        if not idx:
-            return None, None
-        i0, i1 = idx[0], idx[-1]
-        low = (scan_dws[i0 - 1], scan_dws[i0]) if i0 > 0 else None    # (dead, alive)
-        high = (scan_dws[i1], scan_dws[i1 + 1]) if i1 + 1 < len(scan_dws) else None
-        return low, high                                              # (alive, dead)
-
-    br_lo_o, br_hi_o = brackets(surv_ours)
-    br_lo_p, br_hi_p = brackets(surv_pylle)
+    br_lo_o, br_hi_o = initial_brackets(surv_ours, scan_dws)
+    br_lo_p, br_hi_p = initial_brackets(surv_pylle, scan_dws)
     bisect_trace = []
     for it in range(args.bisect_iters):
         mids_p = {}
@@ -1092,19 +1137,19 @@ def main(argv: list[str] | None = None) -> int:
                 c = classify(to_ours(got["runs"][f"bis{it}_{key}"]))
                 step["pylle"][key] = {"midpoint_over_kappa": m / kappa, **c}
                 if key == "lo":
-                    br_lo_p = (br_lo_p[0], m) if c["single"] else (m, br_lo_p[1])
+                    br_lo_p = update_bracket(br_lo_p, m, c["single"], "lo")
                 else:
-                    br_hi_p = (m, br_hi_p[1]) if c["single"] else (br_hi_p[0], m)
+                    br_hi_p = update_bracket(br_hi_p, m, c["single"], "hi")
         for key, br in (("lo", br_lo_o), ("hi", br_hi_o)):
             if br is None:
                 continue
-            m = 0.5 * (br[0] + br[1])
+            m = bracket_midpoint(br)
             c = classify(ours_hold(m, args.scan_roundtrips))
             step["ours"][key] = {"midpoint_over_kappa": m / kappa, **c}
             if key == "lo":
-                br_lo_o = (br_lo_o[0], m) if c["single"] else (m, br_lo_o[1])
+                br_lo_o = update_bracket(br_lo_o, m, c["single"], "lo")
             else:
-                br_hi_o = (m, br_hi_o[1]) if c["single"] else (br_hi_o[0], m)
+                br_hi_o = update_bracket(br_hi_o, m, c["single"], "hi")
         bisect_trace.append(step)
         print(f"   [bisect {it}] ours lo={_br_str(br_lo_o, kappa)} hi={_br_str(br_hi_o, kappa)}"
               f" | pylle lo={_br_str(br_lo_p, kappa)} hi={_br_str(br_hi_p, kappa)}", flush=True)

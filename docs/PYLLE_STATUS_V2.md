@@ -207,6 +207,31 @@ Observed orders: ours `P_peak` 2.31, `S3` 1.56, `μ_DW` 2.48, `dw_power` 1.96,
 `comb_frac` 1.10; pyLLE (tight) `μ_DW` 3.18, `dw_power` 2.08, `U_mean` 1.26,
 `comb_frac` 0.84.
 
+**Caveat on the two CONTAINED rows: they are agreement on grid-truncated
+values.** Both ladders run at `mu_half = 3300`, where the comb is not spectrally
+contained (§6: the blue edge sits at −44 dBc and the blue DW predicted at
+μ ≈ +3239 is unresolved, 61 modes inside the boundary). The `grid_levels` block
+of `validation/results/convergence_lle_dw30k.json`, at `n_substeps = 8`, shows
+what happens when the grid is widened until it *is* contained:
+
+| `mu_half` | 3300 | 4400 | 5500 |
+|---|---|---|---|
+| `mu_DW` | −3075.2469 | −3079.0401 | −3079.0405 |
+| `dw_power_dbc` | −22.7300 | −30.4028 | −30.4029 |
+
+So the physical DW position moves by **3.793 modes** and its band power by
+**7.673 dB** once the comb is contained — both enormous next to the 4.5e-4-mode
+and 2.2e-4 containment gaps quoted above, and both converged by `mu_half = 4400`.
+
+This does **not** weaken the conventions conclusion, which is what those rows are
+for: a mirror, sign or mode-index-origin error would show up at the scale of
+*thousands* of modes, not 4.5e-4, and both codes agreeing that precisely on a
+strongly asymmetric dispersion remains strong evidence that neither has one. But
+it does mean the CONTAINED verdicts are **not** validation of the physical
+dispersive-wave position or amplitude. They establish that the two codes solve
+the same truncated problem the same way; the truncated problem is not the
+physical one.
+
 ### The one SEPARATED verdict
 
 `comb_frac` — the fraction of intracavity energy outside the pump line — is the
@@ -237,11 +262,28 @@ by the evidence:
    ladders are not yet in their asymptotic regime at these steps. If so the
    Richardson bands understate the true uncertainty and the separation is
    spurious. Testable by extending both ladders (ours to n = 32/64, pyLLE to
-   dt = 1/16/1/32).
-3. **Grid truncation.** The comb is **not spectrally contained** (§6): at the
-   grid edge the spectrum sits at −44 dBc. `comb_frac` integrates the whole
-   spectrum, so it inherits whatever the wings do at the boundary, and the two
-   codes' wings differ most exactly there. Testable by raising `--mu-half`.
+   dt = 1/16/1/32). **This is now the only surviving alternative to (1).**
+3. ~~**Grid truncation.**~~ **FALSIFIED — see below.** This was ranked third on
+   the reasoning that the comb is not spectrally contained (§6) and `comb_frac`
+   integrates the whole spectrum, so it should inherit whatever the wings do at
+   the boundary. That reasoning was available to be checked against data already
+   in the repository, and it does not survive the check.
+
+**Correction: grid truncation is not the cause of the `comb_frac` separation.**
+`validation/results/convergence_lle_dw30k.json`'s `grid_levels` block holds
+`comb_frac` at three grid sizes, all at `n_substeps = 8`:
+
+| `mu_half` | 3300 | 4400 | 5500 |
+|---|---|---|---|
+| `comb_frac` | 0.85370458 | 0.85370879 | 0.85370880 |
+
+The entire grid contribution is **4.21e-6** (3300 → 4400, and 1.0e-8 thereafter,
+i.e. converged), against a cross-code limit gap of **1.342e-3**. The gap is
+**319× larger than the largest effect grid truncation can have on this
+observable**. Widening the grid cannot close it, and the hypothesis is
+withdrawn. The remaining ranking is therefore (1) the nonlinear-step rule,
+leading, and (2) non-asymptotic ladders, which would make the separation
+spurious rather than explain it.
 
 Note that the *related* energy observable `U_mean_w` is INDETERMINATE because
 **our** ladder is non-monotone on it (0.192856 → 0.191564 → 0.191314 →
@@ -561,6 +603,122 @@ comb energy fraction) and locate the edge as a level crossing of that, which
 would remove the threshold flip as a candidate. That is a change to an
 observable and therefore out of scope for this task.
 
+### Ours-side edge discretization, measured
+
+*Added after the above was written.* The paragraph above stands as written —
+the sentence "I do not have an explanation for it" was true of what was then
+known, and one of its four bullets is now wrong. The second bullet claimed the
+disagreement "is not the discretization at that operating point, by the
+Kerr-phase argument". **That argument was too quick, and the measurement
+contradicts it.**
+
+The v2 existence bisection ran at `n_substeps = 1` only, so G7 was the one GATED
+criterion whose band contained no discretization term at all. Refining it
+(`validation/existence_convergence.py`, our solver only; pyLLE not run):
+
+| `n_substeps` | 1 | 2 | 4 | drift 1→4 |
+|---|---|---|---|---|
+| lower edge (κ) | 5.890625 | 5.890625 | **6.078125** | **0.1875** |
+| upper edge (κ) | 37.96875 | 37.96875 | 37.96875 | 0.0 |
+
+Bracket half-widths are 0.046875 κ (lower) and 0.15625 κ (upper) at every level.
+At `n_substeps = 1` this reproduces the v2 ours-side existence block **exactly** —
+same survival vector, same brackets, same midpoints, same bisection trace — which
+is the regression gate that makes the rest interpretable.
+
+So the lower edge **does** move under refinement, by 0.1875 κ, and it moves
+**toward pyLLE**: our estimate goes 5.8906 → 6.0781 κ against pyLLE's 6.1719 κ,
+and the gap falls from 0.281 κ to 0.094 κ. The Kerr-phase argument — that at
+0.073 rad per round trip one step per round trip must already be accurate — is a
+statement about the *field*, and it does not transfer to the *edge*: the edge is
+where a marginal state is classified by a threshold, and an arbitrarily small
+change in a marginal state can move it. The upper edge, by contrast, does not
+move at all across the ladder.
+
+Discretization uncertainties, with `U_disc = max(drift_2→4, half-width(finest))`:
+**lower 0.1875 κ** (from the drift), **upper 0.15625 κ** (floored at the
+half-width, since the drift is zero). Richardson on the three-point sequence
+returns `NON_MONOTONE` for both edges — a flat-then-jump sequence has no order to
+fit — so the fallback is used and no fit is forced.
+
+Recomputing G7 with the refined bracket and the measured term, decomposed so the
+cause of any verdict change is visible:
+
+| edge | variant | \|ours−pyLLE\| | band | overlap | verdict |
+|---|---|---|---|---|---|
+| lower | v2 as measured (n=1, no U_disc) | 0.28125 | 0.13258 | no | **FAIL** |
+| lower | refined (n=4), no U_disc | 0.09375 | 0.13258 | **yes** | **PASS** |
+| lower | refined (n=4) + U_disc | 0.09375 | 0.39775 | yes | **PASS** |
+| upper | v2 as measured (n=1, no U_disc) | 0.9375 | 0.44194 | no | **FAIL** |
+| upper | refined (n=4), no U_disc | 0.9375 | 0.44194 | no | **FAIL** |
+| upper | refined (n=4) + U_disc | 0.9375 | 0.54127 | no | **FAIL** |
+
+The lower edge's FAIL → PASS is attributable to **the refined measurement, not to
+the widened band**: it passes at the *original* band once our own edge is
+measured properly, and indeed the two brackets now overlap
+(ours [6.03125, 6.125], pyLLE [6.125, 6.21875] — they meet exactly at 6.125 κ,
+which is a knife-edge overlap and should be read as such). The band term is not
+what rescued it. The upper edge fails under all three variants; its 0.9375 κ gap
+is not a discretization effect, since the upper edge does not move at all.
+
+Two honesty notes on the recomputed band. It is **asymmetric**: pyLLE's own edge
+was not refined by this task, so it contributes no discretization term; a
+pyLLE-side term could only widen the band further, which means a FAIL under this
+band is conservative and a PASS is not. And for the upper edge `U_disc` is
+floored at the bracket half-width, so that half-width enters the quadrature
+twice — again making the band wider than strictly justified, and again meaning
+the upper edge's FAIL is robust.
+
+**Pre-committed outcome: H-C** (intermediate). The deciding number is the
+largest drift across the two edges, 0.1875 κ, which falls between the H-B
+threshold of 0.05 κ and the H-A threshold of 0.28 κ fixed before the run.
+
+A secondary axis repeated the `n = 4` bisections at 2× the hold (4000 round
+trips): both brackets came back identical, so at the refined step the edges are
+insensitive to settle time as well.
+
+### The classifier is not operating marginally — the fourth bullet is weakened too
+
+The fourth bullet above named the threshold classifier as the leading remaining
+suspect, on the reasoning that near a boundary a threshold test can flip on a
+small difference in a marginal state. Recording the contrast at **every**
+evaluation — which is what R8 of this task required, precisely so that a
+threshold flip would be visible — shows that it is not happening here. Across
+all 30 bisection evaluations of the three levels:
+
+| | contrast range | n |
+|---|---|---|
+| classified ALIVE | 19.56 … 15074 | 17 |
+| classified DEAD | 1.01 … 1.70 | 13 |
+
+The decision threshold is **contrast = 5**, and it sits inside an **empty band
+spanning a factor of 11.5×** (1.70 → 19.56). Not one of the 30 evaluations lands
+anywhere near it. The transition is sharp and bimodal: either there is a soliton
+(contrast ≥ 20, one peak) or the field is flat CW (contrast ≈ 1, zero peaks).
+
+The decisive case is the lower edge at δω = 5.9375 κ, where refinement changes
+the answer: `n = 1` gives contrast **61.33** with one peak (a clear soliton),
+`n = 4` gives contrast **1.70** with zero peaks (no soliton at all). That is not
+a classifier flipping on a borderline state — it is the soliton failing to form.
+Whether a soliton survives at that detuning genuinely depends on the step size.
+
+So the classifier is much less plausible as the explanation than it looked, and
+the continuous-order-parameter measurement proposed above would probably
+reproduce the same edges rather than dissolve the disagreement. It remains worth
+doing, but as a confirmation rather than as the leading hypothesis.
+
+**What is now known, and what is still not.** The lower-edge disagreement is
+substantially — though not entirely — a resolution limit of our own measurement:
+two thirds of the original 0.281 κ gap disappears on refining our side, and what
+remains overlaps within the brackets. The upper-edge disagreement, which v1
+reported as a PASS and v2 as a FAIL, survives refinement unchanged, is not a
+classifier artefact, and is **still unexplained**. Two candidates remain for it,
+neither tested: pyLLE's own edge may move under *its* refinement (not measured —
+this task ran no Julia), or the two codes genuinely differ on where the soliton
+ceases to exist at high detuning. Refining pyLLE's edge over its `dt` ladder is
+the obvious next measurement and would also remove the asymmetry in the
+recomputed band.
+
 **The ~1% energy-observable gap.** `U_mean_w` remains INDETERMINATE because our
 own ladder is non-monotone on it, and `comb_frac` is the one SEPARATED verdict.
 Both are energy-partition quantities and both are consistent with the
@@ -574,9 +732,11 @@ nonlinear-step-rule hypothesis of §4, which remains untested.
 |---|---|
 | The conventions are right (Findings 1–9) | Any HARD check failing on a re-run: a parameter round trip above 1e-12, a dispersion refit above 1e-6, a pump-frequency mismatch above 0 Hz, or a seed hash mismatch. Or: the two codes' `μ_DW` limits ceasing to agree when the dispersion is changed to a *different* asymmetric profile — agreement on one profile could in principle be a coincidence of that profile. |
 | `μ_DW` and `dw_power_dbc` are CONTAINED | Extending either ladder (ours to n = 32/64, pyLLE to dt = 1/16) and finding the limits move outside the current bands, i.e. the observed orders 2.48 and 3.18 are not asymptotic. |
-| `comb_frac` is SEPARATED | Any of: (i) extending both ladders and finding the observed orders rise toward 2, which would shrink the bands' credibility and could merge the limits; (ii) raising `--mu-half` until the comb is spectrally contained and finding the gap closes — `comb_frac` integrates the wings, which are grid-limited here; (iii) implementing the endpoint-trapezoidal nonlinear rule in our solver and finding it reproduces pyLLE's limit. (iii) would also confirm the ranked cause. |
+| `comb_frac` is SEPARATED | Either: (i) extending both ladders and finding the observed orders rise toward 2, which would shrink the bands' credibility and could merge the limits; or (ii) implementing the endpoint-trapezoidal nonlinear rule in our solver and finding it reproduces pyLLE's limit — which would also confirm the ranked cause. **Raising `--mu-half` will not do it**: the grid contribution to `comb_frac` is 4.21e-6 against a 1.342e-3 gap (§4), so that route is closed. |
 | The wing gap is discretization, not a Picard floor | A run at `dt = 1` with tight Picard showing a wing-gap change materially larger than the 0.0024 dB measured. The test is cheap and is re-run every time. |
-| The existence-edge disagreement is real | Replacing the binary classifier with a continuous order parameter and finding the edges coincide — which would show the disagreement was in the threshold test, not the physics. Alternatively, a hold-time sensitivity at 16× or 64× that does move a classification. |
+| The **lower** existence-edge disagreement is real | Largely already overturned: refining our own side moves the lower edge 0.1875 κ toward pyLLE and the brackets then overlap (§7). What remains would be settled by refining **pyLLE's** edge over its own `dt` ladder — not done here, which is why the recomputed band is asymmetric — or by raising `bisect_iters` so the two brackets no longer merely touch at 6.125 κ. |
+| The **upper** existence-edge disagreement is real | Unmoved by everything tested so far: it survives `n_substeps` 1→4 (zero drift), 4× hold at n=1, and 2× hold at n=4. It would be overturned by refining pyLLE's upper edge and finding *it* moves by ≈0.9 κ. Replacing the binary classifier with a continuous order parameter is worth doing but is now unlikely to overturn it: no evaluation lands near the decision threshold (§7 — ALIVE contrast ≥ 19.6, DEAD ≤ 1.70, threshold 5). |
+| The edges are resolution-limited rather than genuinely different | A drift measurement at `n_substeps` = 8 or 16 that moves either edge further. The ladder here stops at 4; the lower edge's jump occurs between 2 and 4 and has not been shown to have settled. |
 | The v1 attribution of the DW index was an estimator artefact | Finding that `validation.pylle_crosscheck.observables` returns −3074 at n = 8 or 16 after all, i.e. that the table in correction (c) is wrong. It is regenerable from `validation/results/convergence_lle_dw30k_fields.npz` in seconds. |
 | The run is reproducible | Two runs with the same argv producing different `numerical_digest` values. |
 
@@ -608,3 +768,53 @@ and a set of HARD checks that make "the two codes were solving the same problem"
 a gated assertion rather than an assumption. The v1 run's positive conclusions
 about conventions survive; its interpretations of the residual disagreements do
 not.
+
+---
+
+## 10. Status: FROZEN
+
+**Decision:** the pyLLE cross-check is frozen as of **2026-08-17**, at commit
+`bfa6d9e` (the last commit that changed a result artifact; this section is added
+on top of it). No further pyLLE work is done unless a re-run trigger fires.
+
+**The overall verdict remains `FAIL` with `overall_qualified: true`, and this
+freeze does not change it.** Freezing is not a pass and must not be read as one.
+It is a judgement that the qualification is adequate: every failing and
+unresolved item above is measured, attributed, and carries a named falsification
+test. Nothing in `validation/results/` was altered to reach this decision — the
+verdicts, tolerances and observables are exactly as the runs produced them.
+
+**Stopping-rule items met: 8 of 8.** All seven HARD checks pass; `mu_DW` and
+`dw_power_dbc` are CONTAINED with the grid-truncation caveat recorded (§4); the
+run is bit-reproducible with argv and a numerical digest; all nine falsified v1
+interpretations are documented with evidence and the original text preserved
+(§5); `comb_frac`'s grid-truncation hypothesis is resolved from existing data and
+**falsified** (§4); the existence criterion now carries a measured ours-side
+discretization term (§7, outcome H-C); the remaining discrepancies each have a
+falsification test (§8); and no unresolved item materially affects a current
+claim.
+
+**Not met: none — with one qualification that belongs in the open.** Item 8
+holds for claims about *conventions*, which is what this check is for. It does
+**not** extend to claims about absolute dispersive-wave position or power at
+production settings: the CONTAINED verdicts are agreement on grid-truncated
+values at `mu_half = 3300` (§4), and the production configuration is a different
+one entirely. See `docs/VALIDATION_STATUS.md` §2.
+
+**Re-run triggers.** Re-run `validation/pylle_crosscheck_v2.py` when a
+convention changes (dispersion sign or mirror, mode-index origin, D1/FSR
+reconciliation, pump referencing, field normalization, detuning sign); when the
+linear or nonlinear step composition changes (`_fine_step`, `symmetric_drive`,
+splitting order); when `load_dint_grid` changes; when a new device or dispersion
+profile is introduced; or when a manuscript claim comes to depend on absolute
+agreement with an independent code. The full list, with the reasoning for each,
+is in `docs/VALIDATION_STATUS.md` §5, and `_fine_step` and `load_dint_grid` carry
+comment blocks pointing there.
+
+The cross-check remains runnable exactly as documented in §3; freezing does not
+make it unrunnable, and every default reproduces the frozen artifacts.
+
+**See `docs/VALIDATION_STATUS.md`** for the verification hierarchy, the
+configuration-coverage table (the validated configuration is not the production
+configuration), the open items with their impact lines, and the next validation
+priority.

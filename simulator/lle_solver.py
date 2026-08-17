@@ -462,6 +462,21 @@ class DintGrid(NamedTuple):
     d1: float
 
 
+# -------------------------------------------------------------------------
+# VALIDATION RE-RUN TRIGGER -- see docs/VALIDATION_STATUS.md section 5.
+#
+# The pyLLE cross-check is FROZEN. Changing this loader is one of the five
+# named triggers that require it to be re-run: both codes are fed ONE dispersion
+# array derived through here, so a change alters the problem being solved rather
+# than only the solver solving it. The same applies to the conventions this
+# function fixes -- the D1/FSR reconciliation, the mode-index origin, and which
+# CSV row the grid is referenced to (that row is 7.11 FSR from the nominal pump
+# wavelength, which is exactly the kind of trap the cross-check exists to catch).
+#
+#     python -m validation.pylle_crosscheck_v2 \
+#         --pylle-python ./pylle-env/bin/python \
+#         --julia-bin    ./pylle-env/bin/julia
+# -------------------------------------------------------------------------
 def load_dint_grid(n_tau, csv_path=None, config_path=None) -> "DintGrid":
     """Return D_int(mu) [rad/s], shape (n_tau,), in FFT-bin order (NOT fftshifted),
     ready to drop into the linear operator as ``disp``.
@@ -855,6 +870,23 @@ def _single_trajectory_solver(
     if len(mode_probe_indices) > 0:
         probe_bins = jnp.asarray(mode_probe_indices, dtype=jnp.int32)
 
+    # ---------------------------------------------------------------------
+    # VALIDATION RE-RUN TRIGGER -- see docs/VALIDATION_STATUS.md section 5.
+    #
+    # The pyLLE cross-check is FROZEN. Changing the linear or nonlinear step
+    # composition below -- the operator splitting order, the drive-kick
+    # placement, symmetric_drive, or the half-step structure -- is one of the
+    # five named triggers that require it to be re-run:
+    #
+    #     python -m validation.pylle_crosscheck_v2 \
+    #         --pylle-python ./pylle-env/bin/python \
+    #         --julia-bin    ./pylle-env/bin/julia
+    #
+    # It is the only test in this repository that can catch a convention or
+    # bookkeeping error here (detuning sign, dispersion direction, factors of
+    # 2*pi, mode-index origin); validation/analytic_cw.py and validation/mms.py
+    # would both verify a consistently wrong convention perfectly.
+    # ---------------------------------------------------------------------
     def _fine_step(e_cur, delta_t_cur, dw_step, freq_noise, delta_d1, kick,
                    step_idx, m):
         """Advance the field and thermal state by ONE fine step dt_fine = t_r/M.
