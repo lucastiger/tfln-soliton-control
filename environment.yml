@@ -1,0 +1,55 @@
+# Conda alternative to requirements.lock.txt.
+#
+#     conda env create -f environment.yml
+#     conda activate soliton-control
+#     pip install --no-deps -e .
+#
+# Mirrors the lock file's DIRECT dependencies at the same versions. Read the
+# caveat before using this for anything whose answer must be bit-exact.
+#
+# ---------------------------------------------------------------------------
+# CAVEAT: this is not the bit-identity environment. requirements.lock.txt is.
+# ---------------------------------------------------------------------------
+# conda-forge builds numpy/scipy against its own BLAS/LAPACK (MKL or OpenBLAS
+# depending on the solve), while the PyPI wheels the lock installs carry a
+# different, pinned OpenBLAS. Different BLAS means different reduction order in
+# the dense kernels, which is a legal floating-point difference and a real one:
+# it can move the last bits of a trajectory. jax/jaxlib are installed here via
+# pip precisely so the XLA build is the same one the goldens were produced with,
+# but the surrounding numeric stack still differs.
+#
+# Consequence, stated plainly: `SOLITON_STRICT_ULP=1` is NOT expected to pass in
+# a conda environment, and the `identity` CI job deliberately does not run here.
+# Use this for development, plotting and exploration. For a number that has to
+# match the published one, use the Docker image or a venv built from
+# requirements.lock.txt with --require-hashes.
+# ---------------------------------------------------------------------------
+
+name: soliton-control
+
+channels:
+  - conda-forge
+  - nodefaults
+
+dependencies:
+  # Matches python:3.11-slim in the Dockerfile and the interpreter recorded in
+  # tests/data/golden/*.provenance.json.
+  - python=3.11
+
+  - numpy=2.4.6
+  - scipy=1.17.1
+  - matplotlib-base=3.11.1
+  - pyyaml=6.0.3
+  - tqdm=4.70.0
+  - h5py=3.16.0
+  - sympy=1.14.0
+  - pytest=9.1.1
+
+  - pip
+  - pip:
+      # jax and jaxlib come from PyPI even under conda. conda-forge's jaxlib
+      # feedstock lags upstream and is built independently, so pinning it here
+      # would mean a DIFFERENT XLA than the goldens -- the one difference this
+      # file cannot paper over. These two versions are the lock file's, exactly.
+      - jax==0.10.2
+      - jaxlib==0.10.2

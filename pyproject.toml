@@ -1,0 +1,146 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "soliton-control"
+version = "1.0.0"
+description = "Validated stochastic Lugiato-Lefever benchmark: Kerr-soliton microcomb simulation with per-channel noise attribution"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+keywords = [
+    "Lugiato-Lefever",
+    "Kerr soliton",
+    "microcomb",
+    "stochastic simulation",
+    "JAX",
+    "thermorefractive noise",
+    "quantum noise",
+    "verification",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
+# Base dependencies: exactly what it takes to integrate the stochastic LLE and
+# reproduce a benchmark number. Deliberately NOT including torch/einops -- see
+# the `ml` extra below.
+dependencies = [
+    "jax",
+    "jaxlib",
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "pyyaml",
+    "tqdm",
+    "h5py",
+]
+
+[project.optional-dependencies]
+# The PI-RNN observer (model/, data/dataloader.py) and the two torch-based
+# thermal probes under analysis/. None of it is on the path from a config file
+# to a benchmark number, and torch is ~1 GB installed, so it is opt-in:
+#     pip install soliton-control[ml]
+ml = ["torch", "einops"]
+
+# pyLLE cross-check. Kept separate because pyLLE pins numpy<2 and needs a Julia
+# toolchain, so it cannot share an environment with the solver -- validation/
+# drives it out-of-process via PYLLE_PYTHON. See docs/PYLLE_STATUS_V2.md.
+pylle = ["pyLLE"]
+
+# sympy is a dev rather than a base dependency: validation/mms.py imports it
+# lazily to DERIVE the manufactured-solution forcing term, and
+# tests/test_mms_convergence.py importorskips it. A base install therefore runs
+# without it; CI installs it so the order-of-accuracy test actually executes
+# rather than silently skipping.
+dev = [
+    "pytest",
+    "pytest-cov",
+    "ruff",
+    "jupyter",
+    "nbconvert",
+    "pip-tools",
+    "sympy",
+    # tests/test_packaging_metadata.py parses this file. tomllib is stdlib from
+    # 3.11; without the backport the module would importorskip itself away on
+    # the 3.10 leg of the `fast` matrix, which is the one leg where a
+    # packaging-metadata regression is most likely to show up.
+    "tomli; python_version < '3.11'",
+]
+
+[project.urls]
+Homepage = "https://github.com/lucastiger/soliton-control"
+Repository = "https://github.com/lucastiger/soliton-control"
+Changelog = "https://github.com/lucastiger/soliton-control/blob/main/CHANGELOG.md"
+
+[tool.setuptools]
+# Explicit, because this is a flat layout with many non-package top-level
+# directories (config/, docs/, paper/, tests/); setuptools auto-discovery
+# refuses to guess and errors out on "multiple top-level packages".
+packages = [
+    "analysis",
+    "benchmarks",
+    "control",
+    "data",
+    "model",
+    "simulator",
+    "validation",
+]
+
+# NOTE: install this project EDITABLE (`pip install -e .`).
+# simulator/lle_solver.py:54 resolves the default config as
+# `Path(__file__).resolve().parents[1] / "config" / "sin_params.yaml"`, i.e.
+# relative to the checkout, and validation/ + tests/ hash-pin artifacts by
+# repo-relative path. A non-editable wheel would place simulator/ in
+# site-packages, where parents[1] is site-packages and none of those files
+# exist. Declaring config/ as package data would not fix it -- the path logic
+# points at the repo root, not at the package -- so rather than ship a wheel
+# that imports but cannot run, the supported install is editable-from-checkout.
+
+[tool.pytest.ini_options]
+markers = [
+    "slow",
+    "gpu",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+# Vendored upstream source. It is here to be run unmodified against a pinned
+# pyLLE commit (third_party/pylle/verify_vendor.py checks exactly that), so
+# linting it would only produce findings nobody is allowed to act on.
+extend-exclude = ["third_party"]
+
+[tool.ruff.lint]
+# Deliberately the genuine-error core rather than ruff's broader default set,
+# and this is a considered choice rather than a low bar:
+#
+#   E9  syntax and indentation errors
+#   F63 comparisons that are always true/false (e.g. `assert (x, y)`)
+#   F7  misplaced statements -- `break` outside a loop, and friends
+#   F82 undefined names
+#
+# Every one of those is a defect, never a style opinion. The set is green across
+# the repository today, so the `lint` CI job is a real gate from its first run
+# instead of a wall of pre-existing findings that everyone learns to ignore.
+#
+# Widening it is worthwhile but is its own piece of work, not a rider on the
+# packaging change. Measured on this tree with ruff 0.16.3, the next steps cost:
+# F401/F841 (unused imports and variables) 43 findings, I001 (import order) 80,
+# E402 (imports not at top) 31 -- many of the last group deliberate, guarding an
+# import behind `pytest.importorskip` or behind the x64 flag that
+# simulator/lle_solver.py:29 must set before any array exists. Several files
+# already carry `# noqa: E402` for exactly that reason. Fixing them touches
+# modules this change is not permitted to modify, so it belongs in a PR of its
+# own where the diff can be reviewed as the behaviour-neutral change it claims
+# to be.
+select = ["E9", "F63", "F7", "F82"]

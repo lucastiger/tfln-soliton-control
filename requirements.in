@@ -1,0 +1,39 @@
+# Source for requirements.lock.txt. Regenerate with:
+#
+#     pip-compile --generate-hashes --strip-extras --output-file=requirements.lock.txt requirements.in
+#
+# then restore the jaxlib note at the top of the lock -- pip-compile does not
+# preserve it, and tests/test_packaging_metadata.py fails if it goes missing.
+#
+# Scope: everything needed to REPRODUCE A NUMBER -- the solver's runtime
+# dependencies plus the test runner that checks the result against the committed
+# goldens. Deliberately excludes the developer conveniences from the `dev` extra
+# (ruff, jupyter, nbconvert, pip-tools): those shape the workflow, not the
+# floating-point output, and pinning them with hashes buys nothing while making
+# the lock churn on every tooling bump.
+#
+# Deliberately excludes the `ml` extra (torch, einops) as well. The PI-RNN is not
+# on the path from config file to benchmark number, and a ~1 GB wheel has no
+# business in the image someone pulls to check an LLE result.
+#
+# Kept in step with the base `dependencies` in pyproject.toml -- see
+# tests/test_packaging_metadata.py, which fails if the two drift apart.
+
+jax
+jaxlib
+numpy
+scipy
+matplotlib
+pyyaml
+tqdm
+h5py
+
+# Test runner. The image's CMD is the fast suite, so this belongs in the locked
+# set rather than being installed ad hoc on top of it.
+pytest
+
+# validation/mms.py derives the manufactured-solution forcing symbolically.
+# Without it tests/test_mms_convergence.py importorskips itself away, and the
+# measured order of accuracy -- the strongest correctness evidence in the repo --
+# silently stops being checked.
+sympy

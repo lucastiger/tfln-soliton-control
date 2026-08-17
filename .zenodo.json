@@ -1,0 +1,37 @@
+{
+  "title": "soliton-control: a validated stochastic Lugiato-Lefever benchmark",
+  "description": "<p>A JAX split-step Fourier solver for the Lugiato-Lefever equation with physically normalized stochastic channels &mdash; quantum vacuum, thermorefractive, pyroelectric-electro-optic, thermal-carrier, pump frequency noise and pump RIN &mdash; together with the verification suite that makes their attribution falsifiable: exact-CW and manufactured-solution convergence, a pyLLE cross-check, hash-pinned golden trajectories, and a per-channel noise budget computed with common random numbers.</p><p>Every noise channel is opt-in and every default reproduces the deterministic solver bit-for-bit; <code>tests/test_noise_off_identity.py</code> enforces that against committed golden trajectories.</p>",
+  "upload_type": "software",
+  "version": "1.0.0",
+  "license": "MIT",
+  "access_right": "open",
+  "keywords": [
+    "Lugiato-Lefever",
+    "Kerr soliton",
+    "microcomb",
+    "stochastic simulation",
+    "JAX",
+    "thermorefractive noise",
+    "quantum noise",
+    "verification"
+  ],
+  "creators": [
+    {
+      "name": "Wu, Lucas"
+    }
+  ],
+  "_creators_todo": "TODO: add \"orcid\": \"0000-0000-0000-0000\" (bare iD, no URL prefix -- Zenodo's format) to the creator entry above once the real ORCID is known. Deliberately absent rather than invented.",
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/lucastiger/soliton-control",
+      "relation": "isSupplementTo",
+      "scheme": "url"
+    },
+    {
+      "identifier": "arXiv:2604.05897",
+      "relation": "cites",
+      "scheme": "arxiv"
+    }
+  ],
+  "_doi_todo": "TODO-after-first-release: Zenodo assigns the concept and version DOIs automatically on first archive. Record the concept DOI in CITATION.cff and README.md afterwards; do not hand-write a `doi` key here."
+}

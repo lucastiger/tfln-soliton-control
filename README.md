@@ -1,5 +1,9 @@
 # soliton-control
 
+[![CI](https://github.com/lucastiger/soliton-control/actions/workflows/ci.yml/badge.svg)](https://github.com/lucastiger/soliton-control/actions/workflows/ci.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 `soliton-control` is a scientific computing project scaffold for simulating and controlling soliton dynamics in thin-film lithium niobate (TFLN) and silicon nitride microresonators. The repository is organized around four major workflows:
 
 - **Simulation** of Lugiato–Lefever equation (LLE) dynamics with thermal effects and realistic noise models.
@@ -56,25 +60,82 @@ see `docs/PYLLE_STATUS_V2.md`. Every result artifact is hash-pinned in
 
 ## Installation
 
-1. Clone the repository:
+Requires Python 3.10–3.12.
 
-   ```bash
-   git clone <your-repo-url>
-   cd soliton-control
-   ```
+```bash
+git clone https://github.com/lucastiger/soliton-control
+cd soliton-control
+python -m venv .venv && source .venv/bin/activate
+pip install -e .
+```
 
-2. Create and activate a Python environment (recommended):
+Install **editable** (`-e`). `simulator/lle_solver.py` resolves the default
+config relative to the checkout, so a non-editable wheel imports but cannot find
+`config/sin_params.yaml`.
 
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate
-   ```
+That base install is everything needed to run the solver and the benchmark.
+Extras are opt-in:
 
-3. Install dependencies:
+| Extra | Adds | For |
+|---|---|---|
+| `dev` | pytest, pytest-cov, ruff, jupyter, nbconvert, pip-tools, sympy | development and the full test suite |
+| `ml` | torch, einops | the PI-RNN observer under `model/` and `data/dataloader.py` |
+| `pylle` | pyLLE | the cross-check (also needs Julia; see `docs/PYLLE_STATUS_V2.md`) |
 
-   ```bash
-   pip install -r requirements.txt
-   ```
+```bash
+pip install -e ".[dev]"        # to run the tests
+pip install -e ".[dev,ml]"     # + the learning stack
+```
+
+`torch` is **not** a base dependency: the PI-RNN is downstream of the benchmark,
+and running an LLE should not require a ~1 GB deep-learning framework. Without
+it, `tests/test_model.py` and `tests/test_ablation_encoders.py` are dropped from
+collection (reported in the pytest header); everything else runs.
+
+### Reproducible environment
+
+For a number that must match a published one, use the pinned, hash-verified
+toolchain rather than the floating one — `requirements.lock.txt` pins the exact
+`jaxlib` the committed golden trajectories were produced with, which is what
+makes the 0-ULP identity check meaningful:
+
+```bash
+docker build -t sc . && docker run --rm sc          # fast suite in the pinned image
+```
+
+or directly:
+
+```bash
+pip install --require-hashes -r requirements.lock.txt
+pip install --no-deps --no-build-isolation -e .
+SOLITON_STRICT_ULP=1 pytest tests/test_noise_off_identity.py -q
+```
+
+`environment.yml` is a conda convenience and is explicitly *not* the
+bit-identity environment — see the caveat in its header.
+
+> **Bit-identity needs fixed hardware, not just pinned versions.** On a CI
+> runner carrying the goldens' exact toolchain (jax/jaxlib 0.10.2, numpy 2.4.6,
+> python 3.11.15) the comparison still differs by `max_abs_diff = 6.2e-19`,
+> because XLA reassociates reductions to suit the CPU it compiles for. The same
+> command reproduces at 0 ULP on the machine that wrote the goldens. Treat
+> `SOLITON_STRICT_ULP=1` as a fixed-hardware check, and quote the hardware
+> alongside the versions in any reproducibility claim. Details in
+> [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+### Tests
+
+```bash
+pytest -q                      # fast suite (~9 min on 4 cores)
+pytest -q --runslow            # + the large-grid cases
+pytest -m pylle_full           # needs Julia and a pyLLE environment
+```
+
+## Citing
+
+See [`CITATION.cff`](CITATION.cff). Changes that move numerical output follow
+the bit-identity rule in [`CONTRIBUTING.md`](CONTRIBUTING.md); release history is
+in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Usage Overview
 
