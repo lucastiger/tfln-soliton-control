@@ -768,3 +768,53 @@ and a set of HARD checks that make "the two codes were solving the same problem"
 a gated assertion rather than an assumption. The v1 run's positive conclusions
 about conventions survive; its interpretations of the residual disagreements do
 not.
+
+---
+
+## 10. Status: FROZEN
+
+**Decision:** the pyLLE cross-check is frozen as of **2026-08-17**, at commit
+`bfa6d9e` (the last commit that changed a result artifact; this section is added
+on top of it). No further pyLLE work is done unless a re-run trigger fires.
+
+**The overall verdict remains `FAIL` with `overall_qualified: true`, and this
+freeze does not change it.** Freezing is not a pass and must not be read as one.
+It is a judgement that the qualification is adequate: every failing and
+unresolved item above is measured, attributed, and carries a named falsification
+test. Nothing in `validation/results/` was altered to reach this decision — the
+verdicts, tolerances and observables are exactly as the runs produced them.
+
+**Stopping-rule items met: 8 of 8.** All seven HARD checks pass; `mu_DW` and
+`dw_power_dbc` are CONTAINED with the grid-truncation caveat recorded (§4); the
+run is bit-reproducible with argv and a numerical digest; all nine falsified v1
+interpretations are documented with evidence and the original text preserved
+(§5); `comb_frac`'s grid-truncation hypothesis is resolved from existing data and
+**falsified** (§4); the existence criterion now carries a measured ours-side
+discretization term (§7, outcome H-C); the remaining discrepancies each have a
+falsification test (§8); and no unresolved item materially affects a current
+claim.
+
+**Not met: none — with one qualification that belongs in the open.** Item 8
+holds for claims about *conventions*, which is what this check is for. It does
+**not** extend to claims about absolute dispersive-wave position or power at
+production settings: the CONTAINED verdicts are agreement on grid-truncated
+values at `mu_half = 3300` (§4), and the production configuration is a different
+one entirely. See `docs/VALIDATION_STATUS.md` §2.
+
+**Re-run triggers.** Re-run `validation/pylle_crosscheck_v2.py` when a
+convention changes (dispersion sign or mirror, mode-index origin, D1/FSR
+reconciliation, pump referencing, field normalization, detuning sign); when the
+linear or nonlinear step composition changes (`_fine_step`, `symmetric_drive`,
+splitting order); when `load_dint_grid` changes; when a new device or dispersion
+profile is introduced; or when a manuscript claim comes to depend on absolute
+agreement with an independent code. The full list, with the reasoning for each,
+is in `docs/VALIDATION_STATUS.md` §5, and `_fine_step` and `load_dint_grid` carry
+comment blocks pointing there.
+
+The cross-check remains runnable exactly as documented in §3; freezing does not
+make it unrunnable, and every default reproduces the frozen artifacts.
+
+**See `docs/VALIDATION_STATUS.md`** for the verification hierarchy, the
+configuration-coverage table (the validated configuration is not the production
+configuration), the open items with their impact lines, and the next validation
+priority.

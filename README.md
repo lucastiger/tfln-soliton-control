@@ -35,6 +35,23 @@ Infrastructure: `simulator/colored_noise.py` synthesizes any channel from a one-
 
 **Noise metrology** (`analysis/noise_metrology.py`, paper Sec. V.B.1): the solver can record the complex FFT amplitudes of up to 16 probed modes every round trip (`solve_lle_ssfm_jax(mode_probe_indices=...)` → `mode_probe_history`, one extra FFT per round trip only when enabled). On those records the module computes per-line frequency-noise PSDs (Welch, detrended), the repetition-rate phase, the elastic-tape decomposition S\_μ(f) = S\_c + 2μS\_cr + μ²S\_rep with fix point μ\_fix = −S\_cr/S\_rep (least-squares across ≥5 probes per Fourier bin), β-separation-line effective linewidths (Di Domenico et al., Appl. Opt. 49, 4801 (2010)), timing jitter from the temporal peak trajectory, and a warm-continuation quiet-point sweep (Sec. V.B.5). `analysis/noise_comparison_report.py` regenerates the eight comparison/validation figures and their JSON metrics.
 
+## Validation status
+
+**Before quoting any number this simulator produced, read
+[`docs/VALIDATION_STATUS.md`](docs/VALIDATION_STATUS.md).** It is the single
+top-level answer to "how validated is this, and to what": the verification
+hierarchy with its measured numbers, the **configuration-coverage table** (the
+validated configuration is *not* the production configuration), every open item
+with its impact on current claims, and when to revisit the pyLLE cross-check.
+
+In short: the solver's CW fixed point is checked against exact mathematics to
+~1e-14, its order of accuracy is measured against manufactured solutions, its
+discretization uncertainty is quantified at δω = 30 κ, and its conventions are
+cross-checked against an independent implementation (pyLLE 4.1.2) with 7/7 HARD
+checks passing. That cross-check is **FROZEN** at verdict `FAIL (QUALIFIED)` —
+see `docs/PYLLE_STATUS_V2.md`. Every result artifact is hash-pinned in
+[`validation/results/FROZEN_MANIFEST.md`](validation/results/FROZEN_MANIFEST.md).
+
 ## Installation
 
 1. Clone the repository:
