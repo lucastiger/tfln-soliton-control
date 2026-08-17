@@ -4,6 +4,17 @@ __pycache__/
 
 # Test / tooling caches
 .pytest_cache/
+.ruff_cache/
+
+# Packaging build artifacts. `pip install -e .` writes the egg-info directory
+# into the checkout; it is generated metadata, not source.
+*.egg-info/
+build/
+dist/
+
+# Local virtual environments.
+.venv/
+venv/
 
 # Training run artifacts (written by model/train.py: metrics.jsonl, checkpoints, snapshots)
 runs/

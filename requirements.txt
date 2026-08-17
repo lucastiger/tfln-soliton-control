@@ -1,11 +1,28 @@
+# Base runtime dependencies -- what it takes to integrate the stochastic LLE.
+#
+# This file is a convenience mirror of the `dependencies` table in
+# pyproject.toml, kept for `pip install -r requirements.txt`. Prefer:
+#
+#     pip install -e .              # base, same as this file
+#     pip install -e ".[dev]"       # + pytest, ruff, sympy, notebook tooling
+#     pip install -e ".[ml]"        # + torch, einops (PI-RNN, dataloader)
+#     pip install -e ".[pylle]"     # + pyLLE (needs Julia; separate env)
+#
+# For a reproducible, hash-verified environment -- the one the committed golden
+# trajectories were produced in, and the only one where SOLITON_STRICT_ULP=1 is
+# meaningful -- use requirements.lock.txt instead. Unpinned versions here are
+# deliberate: this set is for "does it still work on a current stack?".
+#
+# torch and einops are NOT here. They moved to the `ml` extra in v1.0.0: the
+# PI-RNN observer is downstream of the benchmark, and nobody should have to
+# install a ~1 GB deep-learning framework to run an LLE. sympy moved to `dev`
+# (validation/mms.py imports it lazily to derive the manufactured solution).
+
 jax
 jaxlib
-torch
 numpy
 scipy
 matplotlib
 pyyaml
 tqdm
 h5py
-einops
-sympy
