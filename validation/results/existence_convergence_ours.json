@@ -1,0 +1,1495 @@
+{
+  "schema_version": "1.0",
+  "provenance": {
+    "git_commit": "0f5856b5a10bfd3f57bfe4bd636f9f0df341d75f",
+    "git_dirty": true,
+    "git_branch": "claude/existence-convergence",
+    "argv": [
+      "--hold-block"
+    ],
+    "command": "python -m validation.existence_convergence --hold-block",
+    "timestamp_utc": "2026-08-17T02:29:33.497061+00:00",
+    "hostname": "vm",
+    "platform": "Linux-6.18.5-fc-v20-x86_64-with-glibc2.39",
+    "versions": {
+      "python": "3.11.15",
+      "numpy": "2.4.6",
+      "scipy": "1.17.1",
+      "jax": "0.10.2"
+    },
+    "physical_parameters": {
+      "fsr_hz": 24600000000.0,
+      "pump_wavelength_m": 1.55e-06,
+      "pin_w": 0.214,
+      "kappa_i_rad_per_s": 30380000.0,
+      "kappa_c_rad_per_s": 121500000.0,
+      "n0": 1.87,
+      "n2_m2_per_w": 2.4e-19,
+      "effective_mode_area_m2": 3.344e-12,
+      "gamma_LLE_per_J_per_s": 1.029e+18
+    },
+    "derived_config": {
+      "filename": "pylle_crosscheck_config.yaml",
+      "sha256": "782afb017732d5ba5923a0804eb6406e73ccfcc387cc83dee149b9589ba4e10f",
+      "overrides": {
+        "dn_dT_per_k": 0.0,
+        "fsr_hz": 24451641068.182365
+      },
+      "fsr_hz_config_leaf": 24600000000.0
+    },
+    "solver_flags": {
+      "fine_cadence_M": 1,
+      "symmetric_drive": false,
+      "dealias_two_thirds": false,
+      "edge_absorber": false,
+      "dispersion_validity_mask": false,
+      "noise_config": "NoiseConfig.all_off()",
+      "dn_dT_per_k": 0.0,
+      "rng_key": "jax.random.PRNGKey(0), unused -- every noise channel off",
+      "n_substeps_ladder": [
+        1,
+        2,
+        4
+      ]
+    },
+    "d_int_source": {
+      "path": "/home/user/soliton-control/validation/results/pylle_crosscheck_v2_fields.npz",
+      "sha256": "3526d0e90df08fbb21a3ded12662212fbfc9ece4839d7112fc98fa239c6ffce3",
+      "npz_key": "d_int_rad_per_s",
+      "note": "read from the frozen v2 artifact, not re-derived"
+    },
+    "v2_reference": {
+      "path": "/home/user/soliton-control/validation/results/pylle_crosscheck_v2.json",
+      "sha256": "c3338a2f107a641000e7ca557301d54bfd96ba47a15ab5de51f66b2b5b769309",
+      "note": "read-only; pyLLE values are reference points only"
+    },
+    "seed_rule": "deterministic sech on the lower CW branch, A^2 = 2*delta_omega/gamma_LLE, w = sqrt(|D2|/(2*delta_omega))",
+    "seed_sha256_per_detuning": {
+      "3.0000": "fa3b344c45765e625834476b1c2d4860ec4bda3ece721c46beccc5dbbd891804",
+      "5.0000": "8f415b33d64f475635d85156e5d37652ae8e31f7745829af844398f91110abee",
+      "8.0000": "66eccaaa0429d12218927fdcb9499da46b1aae611369c2fe1f05a9c658d57634",
+      "16.0000": "4a3c9805776a381a44d0ff90527ff04f97e5fdc00c1ee8edd3283c944c15c823",
+      "30.0000": "3b256f36f0d92e9ecaef3a253c000953847c9f4a0cae0686c70c2ab621caa07d",
+      "40.0000": "c6e156411f9b15d55bbd25d51a0e7652cb987e009958cc587d5f8b4cecbdcf4b",
+      "50.0000": "ee0cfa8a99ae0bd2d0e118e66963ea985678714b4e18c0b95e1b97bb24ab5759"
+    },
+    "seed_sha256_v2_main_run": "4a3c9805776a381a44d0ff90527ff04f97e5fdc00c1ee8edd3283c944c15c823",
+    "classifier": "lower/upper edge = smallest/largest delta_omega at which is_single_soliton (contrast >= 5 AND exactly one circular connected component above the half-way level between peak and median power) returns True for the final field of a constant-detuning hold of n_roundtrips_scan round trips, seeded with the deterministic sech ansatz on the lower CW branch at that detuning; bracketed on the coarse scan grid and bisected bisect_iters times; edge estimate = bracket midpoint, bracket uncertainty = half-width",
+    "edge_observable_version": "edge_v1",
+    "wall_clock_total_s": 3200.40696144104,
+    "level_wall_s": {
+      "1": 390.53033566474915,
+      "2": 522.6071684360504,
+      "4": 788.9875719547272
+    }
+  },
+  "regression_gate": {
+    "reproduces_v2_n1": true,
+    "per_field": {
+      "survival": {
+        "ours": [
+          false,
+          false,
+          true,
+          true,
+          true,
+          false,
+          false
+        ],
+        "v2": [
+          false,
+          false,
+          true,
+          true,
+          true,
+          false,
+          false
+        ],
+        "match": true
+      },
+      "lower_bracket": {
+        "ours": [
+          5.84375,
+          5.9375
+        ],
+        "v2": [
+          5.84375,
+          5.9375
+        ],
+        "match": true
+      },
+      "lower_midpoint": {
+        "ours": 5.890625,
+        "v2": 5.890625,
+        "match": true
+      },
+      "lower_halfwidth": {
+        "ours": 0.046875,
+        "v2": 0.046875,
+        "match": true
+      },
+      "upper_bracket": {
+        "ours": [
+          37.8125,
+          38.125
+        ],
+        "v2": [
+          37.8125,
+          38.125
+        ],
+        "match": true
+      },
+      "upper_midpoint": {
+        "ours": 37.96875,
+        "v2": 37.96875,
+        "match": true
+      },
+      "upper_halfwidth": {
+        "ours": 0.15625,
+        "v2": 0.15625,
+        "match": true
+      },
+      "lower_trace": {
+        "ours": [
+          [
+            6.5,
+            true
+          ],
+          [
+            5.75,
+            false
+          ],
+          [
+            6.125,
+            true
+          ],
+          [
+            5.9375,
+            true
+          ],
+          [
+            5.84375,
+            false
+          ]
+        ],
+        "v2": [
+          [
+            6.5,
+            true
+          ],
+          [
+            5.75,
+            false
+          ],
+          [
+            6.125,
+            true
+          ],
+          [
+            5.9375,
+            true
+          ],
+          [
+            5.84375,
+            false
+          ]
+        ],
+        "match": true
+      },
+      "upper_trace": {
+        "ours": [
+          [
+            35.0,
+            true
+          ],
+          [
+            37.5,
+            true
+          ],
+          [
+            38.75,
+            false
+          ],
+          [
+            38.125,
+            false
+          ],
+          [
+            37.8125,
+            true
+          ]
+        ],
+        "v2": [
+          [
+            35.0,
+            true
+          ],
+          [
+            37.5,
+            true
+          ],
+          [
+            38.75,
+            false
+          ],
+          [
+            38.125,
+            false
+          ],
+          [
+            37.8125,
+            true
+          ]
+        ],
+        "match": true
+      }
+    },
+    "note": "n_substeps=1 must reproduce the v2 ours-side existence block exactly"
+  },
+  "fixed_setup": {
+    "mu_half": 3300,
+    "n_modes": 6601,
+    "n_roundtrips_scan": 2000,
+    "bisect_iters": 5,
+    "scan_over_kappa": [
+      3.0,
+      5.0,
+      8.0,
+      16.0,
+      30.0,
+      40.0,
+      50.0
+    ],
+    "kappa_rad_per_s": 151880000.0,
+    "t_r_s": 4.089705051744962e-11,
+    "local_D2_rad_per_s2": 50011.53497093499,
+    "edge_definition": "lower/upper edge = smallest/largest delta_omega at which is_single_soliton (contrast >= 5 AND exactly one circular connected component above the half-way level between peak and median power) returns True for the final field of a constant-detuning hold of n_roundtrips_scan round trips, seeded with the deterministic sech ansatz on the lower CW branch at that detuning; bracketed on the coarse scan grid and bisected bisect_iters times; edge estimate = bracket midpoint, bracket uncertainty = half-width",
+    "edge_observable_version": "edge_v1"
+  },
+  "hypotheses_pre_committed": {
+    "H-A": "edge moves >= 0.28 kappa over n=1..4 -> the v2 G7 FAIL is a resolution limit, not a code disagreement",
+    "H-B": "edge moves < 0.05 kappa -> the disagreement is not our discretization; standing open item, do NOT widen G7",
+    "H-C": "intermediate -> report the measured value and the recomputed verdict whatever it is"
+  },
+  "levels": [
+    {
+      "n_substeps": 1,
+      "status": "OK",
+      "wall_s": 390.53033566474915,
+      "survival": [
+        false,
+        false,
+        true,
+        true,
+        true,
+        false,
+        false
+      ],
+      "scan": [
+        {
+          "single": false,
+          "n_peaks": 14,
+          "contrast": 26.911805204667534,
+          "peak_power_w": 153.8524695026938,
+          "delta_omega_over_kappa": 3.0
+        },
+        {
+          "single": false,
+          "n_peaks": 0,
+          "contrast": 1.0074537668303736,
+          "peak_power_w": 1.2648729809654595,
+          "delta_omega_over_kappa": 5.0
+        },
+        {
+          "single": true,
+          "n_peaks": 1,
+          "contrast": 88.71803384141522,
+          "peak_power_w": 39.14717754711808,
+          "delta_omega_over_kappa": 8.0
+        },
+        {
+          "single": true,
+          "n_peaks": 1,
+          "contrast": 1203.5028117753805,
+          "peak_power_w": 129.62893268511397,
+          "delta_omega_over_kappa": 16.0
+        },
+        {
+          "single": true,
+          "n_peaks": 1,
+          "contrast": 7637.793648326564,
+          "peak_power_w": 233.99356345616064,
+          "delta_omega_over_kappa": 30.0
+        },
+        {
+          "single": false,
+          "n_peaks": 0,
+          "contrast": 1.0368211805668046,
+          "peak_power_w": 0.01786747537532117,
+          "delta_omega_over_kappa": 40.0
+        },
+        {
+          "single": false,
+          "n_peaks": 0,
+          "contrast": 1.0458177560494815,
+          "peak_power_w": 0.011601135785209077,
+          "delta_omega_over_kappa": 50.0
+        }
+      ],
+      "lower": {
+        "bracket": [
+          5.84375,
+          5.9375
+        ],
+        "midpoint": 5.890625,
+        "halfwidth": 0.046875,
+        "trace": [
+          {
+            "iter": 0,
+            "dw_over_kappa": 6.5,
+            "alive": true,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 92.77154694997729,
+            "peak_power_w": 63.909149829877364,
+            "delta_omega_over_kappa": 6.5,
+            "peak_power_spread_last10": 0.2262654910085559,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          },
+          {
+            "iter": 1,
+            "dw_over_kappa": 5.75,
+            "alive": false,
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.009598614142605,
+            "peak_power_w": 0.9097102395450855,
+            "delta_omega_over_kappa": 5.75,
+            "peak_power_spread_last10": 0.0010855536260660356,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          },
+          {
+            "iter": 2,
+            "dw_over_kappa": 6.125,
+            "alive": true,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 27.593757810519012,
+            "peak_power_w": 21.636426053664824,
+            "delta_omega_over_kappa": 6.125,
+            "peak_power_spread_last10": 0.05753835738197438,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          },
+          {
+            "iter": 3,
+            "dw_over_kappa": 5.9375,
+            "alive": true,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 61.33307533342674,
+            "peak_power_w": 51.08639920368891,
+            "delta_omega_over_kappa": 5.9375,
+            "peak_power_spread_last10": 0.02986561463986023,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          },
+          {
+            "iter": 4,
+            "dw_over_kappa": 5.84375,
+            "alive": false,
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.1949406261318503,
+            "peak_power_w": 1.038175973844836,
+            "delta_omega_over_kappa": 5.84375,
+            "peak_power_spread_last10": 0.015773644299702294,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          }
+        ]
+      },
+      "upper": {
+        "bracket": [
+          37.8125,
+          38.125
+        ],
+        "midpoint": 37.96875,
+        "halfwidth": 0.15625,
+        "trace": [
+          {
+            "iter": 0,
+            "dw_over_kappa": 35.0,
+            "alive": true,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 11704.185558007954,
+            "peak_power_w": 263.88369068366364,
+            "delta_omega_over_kappa": 35.0,
+            "peak_power_spread_last10": 0.022540675153588235,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          },
+          {
+            "iter": 1,
+            "dw_over_kappa": 37.5,
+            "alive": true,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 14923.000825911247,
+            "peak_power_w": 293.5815293386979,
+            "delta_omega_over_kappa": 37.5,
+            "peak_power_spread_last10": 0.00228896866850581,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          },
+          {
+            "iter": 2,
+            "dw_over_kappa": 38.75,
+            "alive": false,
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.044849492357863,
+            "peak_power_w": 0.01915849445634648,
+            "delta_omega_over_kappa": 38.75,
+            "peak_power_spread_last10": 0.0049644155381493235,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          },
+          {
+            "iter": 3,
+            "dw_over_kappa": 38.125,
+            "alive": false,
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.0558468026384242,
+            "peak_power_w": 0.02013540926195025,
+            "delta_omega_over_kappa": 38.125,
+            "peak_power_spread_last10": 0.009236154825105045,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          },
+          {
+            "iter": 4,
+            "dw_over_kappa": 37.8125,
+            "alive": true,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 14582.190383886773,
+            "peak_power_w": 282.37574924500706,
+            "delta_omega_over_kappa": 37.8125,
+            "peak_power_spread_last10": 0.01826990597524309,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "n_substeps": 2,
+      "status": "OK",
+      "wall_s": 522.6071684360504,
+      "survival": [
+        false,
+        false,
+        true,
+        true,
+        true,
+        false,
+        false
+      ],
+      "scan": [
+        {
+          "single": false,
+          "n_peaks": 17,
+          "contrast": 21.069764249186672,
+          "peak_power_w": 136.30822334939617,
+          "delta_omega_over_kappa": 3.0
+        },
+        {
+          "single": false,
+          "n_peaks": 0,
+          "contrast": 1.0074418797034967,
+          "peak_power_w": 1.2667335356995792,
+          "delta_omega_over_kappa": 5.0
+        },
+        {
+          "single": true,
+          "n_peaks": 1,
+          "contrast": 86.94154339181702,
+          "peak_power_w": 38.413034618932265,
+          "delta_omega_over_kappa": 8.0
+        },
+        {
+          "single": true,
+          "n_peaks": 1,
+          "contrast": 1201.023702245107,
+          "peak_power_w": 129.48262783824964,
+          "delta_omega_over_kappa": 16.0
+        },
+        {
+          "single": true,
+          "n_peaks": 1,
+          "contrast": 7590.445326448148,
+          "peak_power_w": 232.32964623955598,
+          "delta_omega_over_kappa": 30.0
+        },
+        {
+          "single": false,
+          "n_peaks": 0,
+          "contrast": 1.049946041790231,
+          "peak_power_w": 0.018066240563931375,
+          "delta_omega_over_kappa": 40.0
+        },
+        {
+          "single": false,
+          "n_peaks": 0,
+          "contrast": 1.0437013200243215,
+          "peak_power_w": 0.011488915546019014,
+          "delta_omega_over_kappa": 50.0
+        }
+      ],
+      "lower": {
+        "bracket": [
+          5.84375,
+          5.9375
+        ],
+        "midpoint": 5.890625,
+        "halfwidth": 0.046875,
+        "trace": [
+          {
+            "iter": 0,
+            "dw_over_kappa": 6.5,
+            "alive": true,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 69.71868285530066,
+            "peak_power_w": 48.07662999446468,
+            "delta_omega_over_kappa": 6.5,
+            "peak_power_spread_last10": 0.18238119880711706,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          },
+          {
+            "iter": 1,
+            "dw_over_kappa": 5.75,
+            "alive": false,
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.010325006859094,
+            "peak_power_w": 0.9117178135259912,
+            "delta_omega_over_kappa": 5.75,
+            "peak_power_spread_last10": 0.0006995239010756984,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          },
+          {
+            "iter": 2,
+            "dw_over_kappa": 6.125,
+            "alive": true,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 19.560424486489094,
+            "peak_power_w": 15.300161943477445,
+            "delta_omega_over_kappa": 6.125,
+            "peak_power_spread_last10": 0.07015573957988822,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          },
+          {
+            "iter": 3,
+            "dw_over_kappa": 5.9375,
+            "alive": true,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 26.021976288031016,
+            "peak_power_w": 21.819348693146626,
+            "delta_omega_over_kappa": 5.9375,
+            "peak_power_spread_last10": 0.23275334566891834,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          },
+          {
+            "iter": 4,
+            "dw_over_kappa": 5.84375,
+            "alive": false,
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.0112580658794375,
+            "peak_power_w": 0.8795887167845683,
+            "delta_omega_over_kappa": 5.84375,
+            "peak_power_spread_last10": 0.0003903591078080531,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          }
+        ]
+      },
+      "upper": {
+        "bracket": [
+          37.8125,
+          38.125
+        ],
+        "midpoint": 37.96875,
+        "halfwidth": 0.15625,
+        "trace": [
+          {
+            "iter": 0,
+            "dw_over_kappa": 35.0,
+            "alive": true,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 12101.848497152296,
+            "peak_power_w": 274.10638297876636,
+            "delta_omega_over_kappa": 35.0,
+            "peak_power_spread_last10": 0.013617214565695554,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          },
+          {
+            "iter": 1,
+            "dw_over_kappa": 37.5,
+            "alive": true,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 13384.067827138968,
+            "peak_power_w": 270.1930037999104,
+            "delta_omega_over_kappa": 37.5,
+            "peak_power_spread_last10": 0.0582528965826748,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          },
+          {
+            "iter": 2,
+            "dw_over_kappa": 38.75,
+            "alive": false,
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.0657082070263055,
+            "peak_power_w": 0.01963706063530873,
+            "delta_omega_over_kappa": 38.75,
+            "peak_power_spread_last10": 0.009268630070589742,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          },
+          {
+            "iter": 3,
+            "dw_over_kappa": 38.125,
+            "alive": false,
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.1349635845222203,
+            "peak_power_w": 0.02160760863043138,
+            "delta_omega_over_kappa": 38.125,
+            "peak_power_spread_last10": 0.026901134710141012,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          },
+          {
+            "iter": 4,
+            "dw_over_kappa": 37.8125,
+            "alive": true,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 15074.41263920671,
+            "peak_power_w": 297.9687773615251,
+            "delta_omega_over_kappa": 37.8125,
+            "peak_power_spread_last10": 0.04506496875631032,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "n_substeps": 4,
+      "status": "OK",
+      "wall_s": 788.9875719547272,
+      "survival": [
+        false,
+        false,
+        true,
+        true,
+        true,
+        false,
+        false
+      ],
+      "scan": [
+        {
+          "single": false,
+          "n_peaks": 7,
+          "contrast": 30.670190726691185,
+          "peak_power_w": 194.9153517553543,
+          "delta_omega_over_kappa": 3.0
+        },
+        {
+          "single": false,
+          "n_peaks": 0,
+          "contrast": 1.0074396421460554,
+          "peak_power_w": 1.2676931332263686,
+          "delta_omega_over_kappa": 5.0
+        },
+        {
+          "single": true,
+          "n_peaks": 1,
+          "contrast": 86.23974446524758,
+          "peak_power_w": 38.12972297998885,
+          "delta_omega_over_kappa": 8.0
+        },
+        {
+          "single": true,
+          "n_peaks": 1,
+          "contrast": 1200.1249742021791,
+          "peak_power_w": 129.4664931442335,
+          "delta_omega_over_kappa": 16.0
+        },
+        {
+          "single": true,
+          "n_peaks": 1,
+          "contrast": 7560.695737399879,
+          "peak_power_w": 231.7941294318006,
+          "delta_omega_over_kappa": 30.0
+        },
+        {
+          "single": false,
+          "n_peaks": 0,
+          "contrast": 1.0553540814078148,
+          "peak_power_w": 0.018198637182194013,
+          "delta_omega_over_kappa": 40.0
+        },
+        {
+          "single": false,
+          "n_peaks": 0,
+          "contrast": 1.0507692441854846,
+          "peak_power_w": 0.011600868636251779,
+          "delta_omega_over_kappa": 50.0
+        }
+      ],
+      "lower": {
+        "bracket": [
+          6.03125,
+          6.125
+        ],
+        "midpoint": 6.078125,
+        "halfwidth": 0.046875,
+        "trace": [
+          {
+            "iter": 0,
+            "dw_over_kappa": 6.5,
+            "alive": true,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 64.98504724492997,
+            "peak_power_w": 44.83225599647037,
+            "delta_omega_over_kappa": 6.5,
+            "peak_power_spread_last10": 0.17120099421123933,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          },
+          {
+            "iter": 1,
+            "dw_over_kappa": 5.75,
+            "alive": false,
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.010293989869144,
+            "peak_power_w": 0.9124171738073982,
+            "delta_omega_over_kappa": 5.75,
+            "peak_power_spread_last10": 0.00044157593419818223,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          },
+          {
+            "iter": 2,
+            "dw_over_kappa": 6.125,
+            "alive": true,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 110.75703593511327,
+            "peak_power_w": 87.48590331742581,
+            "delta_omega_over_kappa": 6.125,
+            "peak_power_spread_last10": 0.2796870016513482,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          },
+          {
+            "iter": 3,
+            "dw_over_kappa": 5.9375,
+            "alive": false,
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.6954296117562186,
+            "peak_power_w": 1.4188533887790067,
+            "delta_omega_over_kappa": 5.9375,
+            "peak_power_spread_last10": 0.0028606113497797697,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          },
+          {
+            "iter": 4,
+            "dw_over_kappa": 6.03125,
+            "alive": false,
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.2155834218462471,
+            "peak_power_w": 0.98198391316417,
+            "delta_omega_over_kappa": 6.03125,
+            "peak_power_spread_last10": 0.03583707669049911,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          }
+        ]
+      },
+      "upper": {
+        "bracket": [
+          37.8125,
+          38.125
+        ],
+        "midpoint": 37.96875,
+        "halfwidth": 0.15625,
+        "trace": [
+          {
+            "iter": 0,
+            "dw_over_kappa": 35.0,
+            "alive": true,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 11829.708410663028,
+            "peak_power_w": 267.61542842350053,
+            "delta_omega_over_kappa": 35.0,
+            "peak_power_spread_last10": 0.038063450641868835,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          },
+          {
+            "iter": 1,
+            "dw_over_kappa": 37.5,
+            "alive": true,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 14556.269470640587,
+            "peak_power_w": 298.90778215774736,
+            "delta_omega_over_kappa": 37.5,
+            "peak_power_spread_last10": 0.029345416653014548,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          },
+          {
+            "iter": 2,
+            "dw_over_kappa": 38.75,
+            "alive": false,
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.0500065757162458,
+            "peak_power_w": 0.019331682622139773,
+            "delta_omega_over_kappa": 38.75,
+            "peak_power_spread_last10": 0.009514508210816263,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          },
+          {
+            "iter": 3,
+            "dw_over_kappa": 38.125,
+            "alive": false,
+            "single": false,
+            "n_peaks": 0,
+            "contrast": 1.0577858154384285,
+            "peak_power_w": 0.020128679443545558,
+            "delta_omega_over_kappa": 38.125,
+            "peak_power_spread_last10": 0.009374116230143066,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          },
+          {
+            "iter": 4,
+            "dw_over_kappa": 37.8125,
+            "alive": true,
+            "single": true,
+            "n_peaks": 1,
+            "contrast": 15046.318488501925,
+            "peak_power_w": 299.92627342483615,
+            "delta_omega_over_kappa": 37.8125,
+            "peak_power_spread_last10": 0.039082441070079445,
+            "label_changed_over_tail": false,
+            "stationarity_offsets": [
+              1,
+              2,
+              5,
+              10
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "edge_convergence": {
+    "lower": {
+      "e1": 5.890625,
+      "e2": 5.890625,
+      "e4": 6.078125,
+      "drift_1_to_4": 0.1875,
+      "drift_2_to_4": 0.1875,
+      "U_disc": 0.1875,
+      "halfwidth_finest": 0.046875,
+      "richardson": {
+        "levels": [
+          5.890625,
+          5.890625,
+          6.078125
+        ],
+        "h": [
+          1.0,
+          0.5,
+          0.25
+        ],
+        "observed_order": null,
+        "extrapolated": null,
+        "gci": null,
+        "U_obs": 0.030848329048843187,
+        "status": "NON_MONOTONE"
+      },
+      "u_disc_source": "drift_2_to_4"
+    },
+    "upper": {
+      "e1": 37.96875,
+      "e2": 37.96875,
+      "e4": 37.96875,
+      "drift_1_to_4": 0.0,
+      "drift_2_to_4": 0.0,
+      "U_disc": 0.15625,
+      "halfwidth_finest": 0.15625,
+      "richardson": {
+        "levels": [
+          37.96875,
+          37.96875,
+          37.96875
+        ],
+        "h": [
+          1.0,
+          0.5,
+          0.25
+        ],
+        "observed_order": null,
+        "extrapolated": null,
+        "gci": null,
+        "U_obs": 0.0,
+        "status": "NON_MONOTONE"
+      },
+      "u_disc_source": "bracket_halfwidth"
+    }
+  },
+  "hold_time_block": {
+    "n_substeps": 4,
+    "n_roundtrips_scan": 4000,
+    "status": "OK",
+    "lower": {
+      "bracket": [
+        6.03125,
+        6.125
+      ],
+      "midpoint": 6.078125,
+      "halfwidth": 0.046875,
+      "trace": [
+        {
+          "iter": 0,
+          "dw_over_kappa": 6.5,
+          "alive": true,
+          "single": true,
+          "n_peaks": 1,
+          "contrast": 83.3126639766859,
+          "peak_power_w": 57.48860847966986,
+          "delta_omega_over_kappa": 6.5,
+          "peak_power_spread_last10": 0.2093358226976714,
+          "label_changed_over_tail": false,
+          "stationarity_offsets": [
+            1,
+            2,
+            5,
+            10
+          ]
+        },
+        {
+          "iter": 1,
+          "dw_over_kappa": 5.75,
+          "alive": false,
+          "single": false,
+          "n_peaks": 0,
+          "contrast": 1.0000187645465026,
+          "peak_power_w": 0.9031023167095267,
+          "delta_omega_over_kappa": 5.75,
+          "peak_power_spread_last10": 1.360262013551409e-06,
+          "label_changed_over_tail": false,
+          "stationarity_offsets": [
+            1,
+            2,
+            5,
+            10
+          ]
+        },
+        {
+          "iter": 2,
+          "dw_over_kappa": 6.125,
+          "alive": true,
+          "single": true,
+          "n_peaks": 1,
+          "contrast": 97.64299676242588,
+          "peak_power_w": 76.11606120204257,
+          "delta_omega_over_kappa": 6.125,
+          "peak_power_spread_last10": 0.08841704447942739,
+          "label_changed_over_tail": false,
+          "stationarity_offsets": [
+            1,
+            2,
+            5,
+            10
+          ]
+        },
+        {
+          "iter": 3,
+          "dw_over_kappa": 5.9375,
+          "alive": false,
+          "single": false,
+          "n_peaks": 0,
+          "contrast": 1.0006983415916584,
+          "peak_power_w": 0.8403992317031919,
+          "delta_omega_over_kappa": 5.9375,
+          "peak_power_spread_last10": 4.94028263456633e-05,
+          "label_changed_over_tail": false,
+          "stationarity_offsets": [
+            1,
+            2,
+            5,
+            10
+          ]
+        },
+        {
+          "iter": 4,
+          "dw_over_kappa": 6.03125,
+          "alive": false,
+          "single": false,
+          "n_peaks": 0,
+          "contrast": 1.0004054431895122,
+          "peak_power_w": 0.8111678424724527,
+          "delta_omega_over_kappa": 6.03125,
+          "peak_power_spread_last10": 2.8872367421617698e-05,
+          "label_changed_over_tail": false,
+          "stationarity_offsets": [
+            1,
+            2,
+            5,
+            10
+          ]
+        }
+      ]
+    },
+    "upper": {
+      "bracket": [
+        37.8125,
+        38.125
+      ],
+      "midpoint": 37.96875,
+      "halfwidth": 0.15625,
+      "trace": [
+        {
+          "iter": 0,
+          "dw_over_kappa": 35.0,
+          "alive": true,
+          "single": true,
+          "n_peaks": 1,
+          "contrast": 12130.31053276594,
+          "peak_power_w": 274.1748591728434,
+          "delta_omega_over_kappa": 35.0,
+          "peak_power_spread_last10": 0.0073490125115588615,
+          "label_changed_over_tail": false,
+          "stationarity_offsets": [
+            1,
+            2,
+            5,
+            10
+          ]
+        },
+        {
+          "iter": 1,
+          "dw_over_kappa": 37.5,
+          "alive": true,
+          "single": true,
+          "n_peaks": 1,
+          "contrast": 13839.871317962621,
+          "peak_power_w": 284.9045899783217,
+          "delta_omega_over_kappa": 37.5,
+          "peak_power_spread_last10": 0.04771332589874639,
+          "label_changed_over_tail": false,
+          "stationarity_offsets": [
+            1,
+            2,
+            5,
+            10
+          ]
+        },
+        {
+          "iter": 2,
+          "dw_over_kappa": 38.75,
+          "alive": false,
+          "single": false,
+          "n_peaks": 0,
+          "contrast": 1.0001136637465686,
+          "peak_power_w": 0.018350054173117324,
+          "delta_omega_over_kappa": 38.75,
+          "peak_power_spread_last10": 2.1902762444748817e-05,
+          "label_changed_over_tail": false,
+          "stationarity_offsets": [
+            1,
+            2,
+            5,
+            10
+          ]
+        },
+        {
+          "iter": 3,
+          "dw_over_kappa": 38.125,
+          "alive": false,
+          "single": false,
+          "n_peaks": 0,
+          "contrast": 1.0001399166095029,
+          "peak_power_w": 0.018957037010600555,
+          "delta_omega_over_kappa": 38.125,
+          "peak_power_spread_last10": 3.708136928552e-05,
+          "label_changed_over_tail": false,
+          "stationarity_offsets": [
+            1,
+            2,
+            5,
+            10
+          ]
+        },
+        {
+          "iter": 4,
+          "dw_over_kappa": 37.8125,
+          "alive": true,
+          "single": true,
+          "n_peaks": 1,
+          "contrast": 13728.434228050819,
+          "peak_power_w": 273.88467044159137,
+          "delta_omega_over_kappa": 37.8125,
+          "peak_power_spread_last10": 0.05564323568324188,
+          "label_changed_over_tail": false,
+          "stationarity_offsets": [
+            1,
+            2,
+            5,
+            10
+          ]
+        }
+      ]
+    },
+    "note": "separates residual settle time from discretization; kept OUT of U_disc, which is a discretization quantity only"
+  },
+  "g7_recomputed": {
+    "pylle_u_disc_not_measured": true,
+    "asymmetry_note": "U_disc is measured for OUR edge only. This task does not refine pyLLE's existence bisection (it runs no Julia), so pyLLE contributes no discretization term and the recomputed band is asymmetric. A pyLLE-side term could only widen the band further, so a FAIL under this band is conservative and a PASS is not.",
+    "lower": {
+      "edge": "lower",
+      "coverage_factor": 2.0,
+      "v2_as_measured": {
+        "ours_bracket": [
+          5.84375,
+          5.9375
+        ],
+        "pylle_bracket": [
+          6.125,
+          6.21875
+        ],
+        "ours_midpoint": 5.890625,
+        "pylle_midpoint": 6.171875,
+        "hw_ours": 0.046875,
+        "hw_pylle": 0.046875,
+        "U_disc_ours": 0.0,
+        "abs_diff": 0.28125,
+        "band": 0.13258252147247765,
+        "brackets_overlap": false,
+        "passes_by_overlap": false,
+        "passes_by_band": false,
+        "verdict": "FAIL"
+      },
+      "refined_no_u_disc": {
+        "ours_bracket": [
+          6.03125,
+          6.125
+        ],
+        "pylle_bracket": [
+          6.125,
+          6.21875
+        ],
+        "ours_midpoint": 6.078125,
+        "pylle_midpoint": 6.171875,
+        "hw_ours": 0.046875,
+        "hw_pylle": 0.046875,
+        "U_disc_ours": 0.0,
+        "abs_diff": 0.09375,
+        "band": 0.13258252147247765,
+        "brackets_overlap": true,
+        "passes_by_overlap": true,
+        "passes_by_band": true,
+        "verdict": "PASS"
+      },
+      "refined_with_u_disc": {
+        "ours_bracket": [
+          6.03125,
+          6.125
+        ],
+        "pylle_bracket": [
+          6.125,
+          6.21875
+        ],
+        "ours_midpoint": 6.078125,
+        "pylle_midpoint": 6.171875,
+        "hw_ours": 0.046875,
+        "hw_pylle": 0.046875,
+        "U_disc_ours": 0.1875,
+        "abs_diff": 0.09375,
+        "band": 0.397747564417433,
+        "brackets_overlap": true,
+        "passes_by_overlap": true,
+        "passes_by_band": true,
+        "verdict": "PASS"
+      },
+      "verdict_change_attributed_to": "the refined edge measurement -- our own edge moved; the band term is not what changed the verdict",
+      "u_disc_double_counts_halfwidth": false,
+      "refined_bracket_source": "this task, n_substeps=4",
+      "v2_bracket_source": "pylle_crosscheck_v2.json, n_substeps=1"
+    },
+    "upper": {
+      "edge": "upper",
+      "coverage_factor": 2.0,
+      "v2_as_measured": {
+        "ours_bracket": [
+          37.8125,
+          38.125
+        ],
+        "pylle_bracket": [
+          36.875,
+          37.1875
+        ],
+        "ours_midpoint": 37.96875,
+        "pylle_midpoint": 37.03125,
+        "hw_ours": 0.15625,
+        "hw_pylle": 0.15625,
+        "U_disc_ours": 0.0,
+        "abs_diff": 0.9375,
+        "band": 0.4419417382415922,
+        "brackets_overlap": false,
+        "passes_by_overlap": false,
+        "passes_by_band": false,
+        "verdict": "FAIL"
+      },
+      "refined_no_u_disc": {
+        "ours_bracket": [
+          37.8125,
+          38.125
+        ],
+        "pylle_bracket": [
+          36.875,
+          37.1875
+        ],
+        "ours_midpoint": 37.96875,
+        "pylle_midpoint": 37.03125,
+        "hw_ours": 0.15625,
+        "hw_pylle": 0.15625,
+        "U_disc_ours": 0.0,
+        "abs_diff": 0.9375,
+        "band": 0.4419417382415922,
+        "brackets_overlap": false,
+        "passes_by_overlap": false,
+        "passes_by_band": false,
+        "verdict": "FAIL"
+      },
+      "refined_with_u_disc": {
+        "ours_bracket": [
+          37.8125,
+          38.125
+        ],
+        "pylle_bracket": [
+          36.875,
+          37.1875
+        ],
+        "ours_midpoint": 37.96875,
+        "pylle_midpoint": 37.03125,
+        "hw_ours": 0.15625,
+        "hw_pylle": 0.15625,
+        "U_disc_ours": 0.15625,
+        "abs_diff": 0.9375,
+        "band": 0.5412658773652742,
+        "brackets_overlap": false,
+        "passes_by_overlap": false,
+        "passes_by_band": false,
+        "verdict": "FAIL"
+      },
+      "verdict_change_attributed_to": "no change",
+      "u_disc_double_counts_halfwidth": true,
+      "refined_bracket_source": "this task, n_substeps=4",
+      "v2_bracket_source": "pylle_crosscheck_v2.json, n_substeps=1"
+    }
+  },
+  "hypothesis_outcome": {
+    "outcome": "H-C",
+    "deciding_drift": 0.1875,
+    "drift_lower": 0.1875,
+    "drift_upper": 0.0,
+    "thresholds": {
+      "H_A_at_or_above": 0.28,
+      "H_B_below": 0.05
+    },
+    "reason": "max drift_1_to_4 = 0.1875 kappa lies between the pre-committed thresholds 0.05 and 0.28 kappa"
+  },
+  "fields_npz": {
+    "path": "/home/user/soliton-control/validation/results/existence_convergence_ours_fields.npz",
+    "sha256": "cac0c0318a3d5715897a471812fc68adde873388163d4f2728418c2de515fe42"
+  },
+  "numerical_digest": "01b181e09be812e012c036cadf25d2b581b4e410e4856a8aa12155219a4b9172"
+}
