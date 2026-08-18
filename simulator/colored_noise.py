@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from typing import Any, Callable
 
 import numpy as np
 
@@ -54,16 +55,53 @@ _K_B = 1.380649e-23  # Boltzmann constant [J/K]
 # ---------------------------------------------------------------------------
 # Determinism: JAX key -> numpy Generator
 # ---------------------------------------------------------------------------
-def np_generator_from_key(key) -> np.random.Generator:
-    """Deterministic host-side numpy ``Generator`` derived from a JAX PRNG key.
+def np_generator_from_key(key: Any) -> np.random.Generator:
+    """Derive a deterministic host-side numpy ``Generator`` from a JAX PRNG key.
 
-    The full key data is folded into a ``SeedSequence`` (little-endian byte
-    concatenation of the uint32 key words), so distinct JAX keys give
-    independent, reproducible numpy streams regardless of the JAX backend or
-    x64 flag. This is the SINGLE seeding convention used by every host-side
-    noise synthesis in the repository (pump noise adopted it first; the
-    colored TRN/segment-continuity paths reuse it), and it is pinned by a
-    determinism test in tests/test_colored_noise.py.
+    Parameters
+    ----------
+    key : jax.Array
+        JAX PRNG key (typed key, or the legacy ``uint32`` key array returned by
+        ``jax.random.PRNGKey``). Dimensionless.
+
+    Returns
+    -------
+    numpy.random.Generator
+        A ``PCG64``-backed generator seeded from the FULL key data, so distinct
+        JAX keys give independent, reproducible numpy streams regardless of the
+        JAX backend or of the ``jax_enable_x64`` flag.
+
+    Raises
+    ------
+    ImportError
+        If JAX cannot be imported. The import is deliberately function-local:
+        this module must stay importable (and must not create a JAX module
+        object) on the solver's hot path.
+    TypeError
+        Propagated from ``jax.random.key_data`` if ``key`` is not a PRNG key.
+
+    Notes
+    -----
+    The full key data is folded into a ``numpy.random.SeedSequence`` as a
+    little-endian byte concatenation of the ``uint32`` key words. This is the
+    SINGLE seeding convention used by every host-side noise synthesis in the
+    repository -- pump noise adopted it first, the colored TRN and
+    segment-continuity paths reuse it -- and it is pinned by a determinism test
+    in ``tests/test_colored_noise.py``.
+
+    No physical units are involved: this function is pure bookkeeping between
+    two PRNG conventions.
+
+    Examples
+    --------
+    The same key always yields the same stream, and different keys do not:
+
+    >>> import jax
+    >>> a = np_generator_from_key(jax.random.PRNGKey(0)).standard_normal(3)
+    >>> b = np_generator_from_key(jax.random.PRNGKey(0)).standard_normal(3)
+    >>> c = np_generator_from_key(jax.random.PRNGKey(1)).standard_normal(3)
+    >>> bool((a == b).all()), bool((a == c).all())
+    (True, False)
     """
     import jax  # local import: keep this module importable without tracing
 
@@ -75,34 +113,74 @@ def np_generator_from_key(key) -> np.random.Generator:
 # ---------------------------------------------------------------------------
 # The engine
 # ---------------------------------------------------------------------------
-def synthesize_from_psd(rng: np.random.Generator, n: int, psd, f_s: float,
+def synthesize_from_psd(rng: np.random.Generator, n: int,
+                        psd: Callable[[np.ndarray], np.ndarray], f_s: float,
                         clamp_dc: bool = True) -> np.ndarray:
-    """Length-``n`` float64 real sequence whose Welch PSD matches ``psd``.
+    """Synthesize a real sequence whose one-sided PSD matches ``psd``.
 
-    Implements the module-docstring recipe exactly: rfft bins
-    ``f_k = k*f_s/n``; ``zeta_k`` standard complex normal for ``0 < k < n/2``,
-    standard real normal at ``k = 0`` and (even n) ``k = n/2``;
-    ``c_k = zeta_k*sqrt(S(f_k)*f_s*n/2)``; ``x = irfft(c, n=n)``. Then
-    ``Var(x) = integral_0^{f_s/2} S df`` and the sequence is stationary from
-    sample 0 (no AR(1)-style start-up transient — this is what the
-    segment-continuity fix relies on).
+    Parameters
+    ----------
+    rng : numpy.random.Generator
+        Host-side generator, normally built by :func:`np_generator_from_key`.
+        The draw order -- all real parts first, then all imaginary parts -- is
+        part of the determinism contract and must not be reordered.
+    n : int
+        Sequence length [samples]. ``n < 2`` short-circuits to zeros.
+    psd : callable
+        One-sided target PSD ``S(f)`` [X**2/Hz] for a process carrying units
+        X, evaluated on the non-negative rfft frequency grid [Hz]. Negative
+        returns are clipped to 0.
+    f_s : float
+        Sample rate [Hz].
+    clamp_dc : bool, optional
+        If ``True`` (default) clamp ``S(0) := S(f_1)`` so 1/f-type spectra stay
+        finite at DC. ``False`` preserves whatever the callable returns at
+        ``f = 0`` -- the legacy pump-noise behaviour, where the callables clamp
+        their own DC bin.
 
-    Args:
-        rng: numpy Generator (see :func:`np_generator_from_key`). The draw
-            order (all real parts, then all imaginary parts) is part of the
-            determinism contract.
-        n: Sequence length. ``n < 2`` returns zeros.
-        psd: Callable ``S(f) -> array`` one-sided PSD [X**2/Hz]; evaluated on
-            the non-negative rfft frequency grid. Negative values are
-            clipped to 0.
-        f_s: Sample rate [Hz].
-        clamp_dc: If True (default) clamp ``S(0) := S(f_1)`` so 1/f-type
-            spectra stay finite at DC. ``False`` preserves whatever the
-            callable returns at f = 0 (legacy pump-noise behaviour, where
-            the callables clamp their own DC bin).
+    Returns
+    -------
+    numpy.ndarray
+        Shape ``(n,)``, dtype ``float64``, units X (the square root of the
+        units of ``psd``), with
+        ``Var(x) ~ integral_0^{f_s/2} S(f) df``.
 
-    Returns:
-        (n,) float64 array with ``Var(x) ~ integral_0^{f_s/2} S(f) df``.
+    Raises
+    ------
+    ValueError
+        Propagated from ``numpy.broadcast_to`` if ``psd(f)`` returns an array
+        that is neither scalar nor of the rfft grid shape ``(n//2 + 1,)``.
+
+    Notes
+    -----
+    Implements the module-docstring recipe exactly. On the rfft bins
+    ``f_k = k*f_s/n``, draw ``zeta_k`` as a standard complex normal
+    (``E|zeta_k|**2 = 1``) for ``0 < k < n/2`` and as a standard real normal at
+    ``k = 0`` and (for even ``n``) ``k = n/2``; set
+    ``c_k = zeta_k*sqrt(S(f_k)*f_s*n/2)`` and ``x = irfft(c, n=n)``.
+
+    The result is stationary from sample 0 -- there is no AR(1)-style start-up
+    transient -- which is what the segment-continuity path
+    (``legacy_segment_noise = 0``) relies on when it slices one long
+    realization into per-segment pieces.
+
+    Examples
+    --------
+    A Lorentzian target whose total variance is 4 (units X**2):
+
+    >>> import numpy as np
+    >>> x = synthesize_from_psd(np.random.default_rng(0), 65536,
+    ...                         single_pole_psd(4.0, 1e-4), f_s=1e5)
+    >>> print(x.shape, x.dtype)
+    (65536,) float64
+    >>> bool(0.8 < x.var() / 4.0 < 1.2)
+    True
+
+    Degenerate lengths return zeros without touching ``rng``:
+
+    >>> synthesize_from_psd(np.random.default_rng(0), 1,
+    ...                     single_pole_psd(1.0, 1e-3), f_s=1e5)
+    array([0.])
     """
     n = int(n)
     if n < 2:
@@ -124,15 +202,56 @@ def synthesize_from_psd(rng: np.random.Generator, n: int, psd, f_s: float,
     return np.fft.irfft(z * amp, n=n).astype(np.float64)
 
 
-def integrate_psd(psd, f_lo: float, f_hi: float, n_grid: int = 20_000) -> float:
-    """``integral_{f_lo}^{f_hi} S(f) df`` on a log-spaced grid (trapezoid).
+def integrate_psd(psd: Callable[[np.ndarray], np.ndarray], f_lo: float,
+                  f_hi: float, n_grid: int = 20_000) -> float:
+    """Integrate a one-sided PSD over a band on a log-spaced trapezoid grid.
 
-    Used to (a) renormalize the Kondratiev–Gorodetsky asymptotic PSD to the
-    thermodynamic variance and (b) provide the variance target of the engine
-    unit tests. ``f_lo`` must be > 0 (log grid); pick it low enough that the
-    omitted band [0, f_lo] is negligible for the model at hand (the K-G
-    spectrum behaves as f**-1/2 at low f, so its [0, f_lo] contribution
-    scales as sqrt(f_lo) and vanishes as f_lo -> 0).
+    Parameters
+    ----------
+    psd : callable
+        One-sided PSD ``S(f)`` [X**2/Hz] as a function of frequency [Hz].
+    f_lo : float
+        Lower integration limit [Hz]. Must be strictly positive (the grid is
+        logarithmic).
+    f_hi : float
+        Upper integration limit [Hz]. Must exceed ``f_lo``.
+    n_grid : int, optional
+        Number of log-spaced quadrature points (default 20000). Dimensionless.
+
+    Returns
+    -------
+    float
+        ``integral_{f_lo}^{f_hi} S(f) df`` [X**2].
+
+    Raises
+    ------
+    ValueError
+        If ``f_lo <= 0`` or ``f_hi <= f_lo``.
+
+    Notes
+    -----
+    Two callers rely on this: it renormalizes the Kondratiev--Gorodetsky
+    asymptotic PSD (arXiv:2604.05897v1 Eq. 130) to the thermodynamic variance
+    of Eq. 129, and it supplies the variance target of the engine unit tests.
+
+    Choose ``f_lo`` low enough that the omitted band ``[0, f_lo]`` is negligible
+    for the model at hand. The Kondratiev--Gorodetsky spectrum behaves as
+    ``f**-1/2`` at low frequency, so its ``[0, f_lo]`` contribution scales as
+    ``sqrt(f_lo)`` and vanishes as ``f_lo -> 0``.
+
+    Examples
+    --------
+    A Lorentzian of unit-consistent total variance 2 integrates back to 2 once
+    the band covers its corner at ``1/(2*pi*tau)``:
+
+    >>> total = integrate_psd(single_pole_psd(2.0, 1e-6), f_lo=1.0, f_hi=1e9)
+    >>> print(f"{total:.4f}")
+    1.9998
+
+    >>> integrate_psd(single_pole_psd(2.0, 1e-6), f_lo=0.0, f_hi=1e9)
+    Traceback (most recent call last):
+        ...
+    ValueError: need 0 < f_lo < f_hi, got (0.0, 1000000000.0).
     """
     if not (f_lo > 0.0 and f_hi > f_lo):
         raise ValueError(f"need 0 < f_lo < f_hi, got ({f_lo!r}, {f_hi!r}).")
@@ -144,15 +263,53 @@ def integrate_psd(psd, f_lo: float, f_hi: float, n_grid: int = 20_000) -> float:
 # ---------------------------------------------------------------------------
 # Named PSD models
 # ---------------------------------------------------------------------------
-def single_pole_psd(variance: float, tau: float):
-    """One-sided single-pole (Lorentzian) PSD with total variance ``variance``.
+def single_pole_psd(variance: float,
+                    tau: float) -> Callable[[np.ndarray], np.ndarray]:
+    """Build a one-sided single-pole (Lorentzian) PSD of given total variance.
 
-        S(f) = 4*variance*tau / (1 + (2*pi*f*tau)**2)   [X**2/Hz]
+    Parameters
+    ----------
+    variance : float
+        Total variance [X**2] of the process, i.e. ``integral_0^inf S df``.
+        Units follow the process: K**2 for a temperature fluctuation,
+        (rad/s)**2 for a detuning noise.
+    tau : float
+        Correlation time [s]. The half-power corner sits at ``1/(2*pi*tau)``
+        [Hz].
 
-    ``integral_0^inf S df = variance`` — the spectral twin of the repository's
-    AR(1) generator (an AR(1) with correlation time tau sampled at
-    dt << tau has exactly this spectrum). Units of S follow the units of
-    ``variance`` (K**2 -> K**2/Hz, etc.).
+    Returns
+    -------
+    callable
+        ``S(f)`` mapping frequency [Hz] (scalar or array) to the one-sided PSD
+        [X**2/Hz], of the same shape as its argument.
+
+    Raises
+    ------
+    TypeError
+        If ``variance`` or ``tau`` cannot be coerced to ``float`` -- both are
+        converted eagerly, so a bad argument fails at build time rather than on
+        first evaluation.
+
+    Notes
+    -----
+    The spectrum is
+
+    .. math:: S(f) = \\frac{4\\,\\sigma^2 \\tau}{1 + (2\\pi f \\tau)^2}
+
+    which integrates to ``variance`` over ``[0, inf)`` in the one-sided
+    convention. It is the spectral twin of the repository's AR(1) generator: an
+    AR(1) process with correlation time ``tau``, sampled at ``dt << tau``, has
+    exactly this spectrum. That equivalence is what lets
+    :meth:`simulator.noise_models.TotalNoise.sample_full_with_delta_t`
+    reproduce the ``single_pole`` channel through the PSD engine.
+
+    Examples
+    --------
+    >>> psd = single_pole_psd(variance=2.0, tau=1e-6)
+    >>> float(psd(0.0))                       # S(0) = 4*variance*tau
+    8e-06
+    >>> float(psd(1.0 / (2 * 3.141592653589793 * 1e-6)))   # half power
+    4e-06
     """
     variance = float(variance)
     tau = float(tau)
@@ -175,37 +332,106 @@ def kondratiev_gorodetsky_psd(
     mode_volume: float,
     f_max: float,
     f_lo: float = 1.0,
-):
-    """Analytic WGM thermorefractive temperature PSD, arXiv:2604.05897 Eq. 130.
+) -> tuple[Callable[[np.ndarray], np.ndarray], float]:
+    """Build the analytic WGM thermorefractive temperature PSD (Eq. 130).
 
-    One-sided S_dT(omega) of the mode-averaged temperature fluctuation of a
-    whispering-gallery/ring mode of radius ``R`` and Gaussian mode
-    half-dimensions ``d_a`` (major) and ``d_b`` (minor):
+    Parameters
+    ----------
+    T_k : float
+        Ambient temperature [K]. ``T_k = 0`` is the repository's deterministic
+        "noise-off" convention and returns an identically zero spectrum.
+    kappa_th : float
+        Thermal conductivity [W/(m K)].
+    rho : float
+        Density [kg/m**3].
+    cp : float
+        Specific heat capacity [J/(kg K)].
+    R : float
+        Ring / whispering-gallery radius [m].
+    d_a : float
+        Gaussian mode half-dimension along the MAJOR axis [m].
+    d_b : float
+        Gaussian mode half-dimension along the MINOR axis [m].
+    mode_volume : float
+        Optical mode volume V [m**3], used only for the Eq. 129 variance pin.
+    f_max : float
+        Upper limit [Hz] of the band the variance is pinned over. Should be the
+        synthesis Nyquist ``f_s/2``.
+    f_lo : float, optional
+        Lower limit [Hz] of the renormalization integral (default 1.0). The
+        shape goes as ``f**-1/2`` at low frequency, so the omitted ``[0, f_lo]``
+        band carries ``O(sqrt(f_lo))`` of the norm -- negligible at 1 Hz against
+        an ``f_max`` of order 1e10 Hz.
+
+    Returns
+    -------
+    psd : callable
+        ``S_dT(f)`` mapping frequency [Hz] to the one-sided temperature PSD
+        [K**2/Hz], same shape as its argument.
+    var_eq129 : float
+        The thermodynamic variance ``k_B*T**2/(rho*C*V)`` [K**2] that the
+        returned spectrum integrates to over ``[f_lo, f_max]``.
+
+    Raises
+    ------
+    ValueError
+        If any of ``R``, ``d_a``, ``d_b`` is non-positive, or if
+        ``d_a < 1.2*d_b`` -- the Eq. 130 prefactor
+        ``[R*sqrt(d_a**2 - d_b**2)]**-1`` degenerates for a near-circular mode,
+        and the paper prescribes a rescaling for that limit rather than this
+        formula.
+
+    Notes
+    -----
+    One-sided ``S_dT(omega)`` of the mode-averaged temperature fluctuation of a
+    whispering-gallery / ring mode, arXiv:2604.05897v1 Eq. 130::
 
         S_dT(omega) = [k_B*T**2 / sqrt(pi**3 * kappa_th * rho * C * omega)]
                       * [R * sqrt(d_a**2 - d_b**2)]**-1
                       * [1 + (omega*tau_d)**(3/4)]**-2,
         tau_d = (pi/4)**(1/3) * (rho*C/kappa_th) * d_b**2,
 
-    with k_B the Boltzmann constant, T the temperature [K], kappa_th the
-    thermal conductivity [W/(m K)], rho the density [kg/m^3], C the specific
-    heat [J/(kg K)]. The formula DEGENERATES for d_a ~ d_b (the prefactor
-    diverges); the paper notes a rescaling for that limit, so this factory
-    asserts ``d_a >= 1.2*d_b`` and refers the user to the paper's remark
-    otherwise.
+    with ``k_B`` the Boltzmann constant [J/K] and ``omega = 2*pi*f`` [rad/s].
 
-    Renormalization (documented behaviour): the analytic form is an
-    ASYMPTOTIC matching of the low- and high-frequency limits, so its
-    absolute integral does not exactly reproduce the thermodynamic variance.
-    The returned PSD is therefore rescaled by a single constant so that
+    The analytic form is an ASYMPTOTIC matching of the low- and
+    high-frequency limits, so its absolute integral does not exactly reproduce
+    the thermodynamic variance. The returned PSD is therefore rescaled by a
+    single constant such that
 
-        integral_0^{f_max} S_dT(f) df  ==  k_B*T**2/(rho*C*V)      (Eq. 129)
+        integral_{f_lo}^{f_max} S_dT(f) df == k_B*T**2/(rho*C*V)   (Eq. 129)
 
-    with V = ``mode_volume`` — the total variance is pinned to
-    thermodynamics and the analytic curve only supplies the SHAPE.
-    ``f_max`` should be the synthesis Nyquist (f_s/2). Returns
-    ``(psd_callable, var_eq129)`` where the callable maps f [Hz] to
-    S_dT [K**2/Hz]; at ``T_k = 0`` both are identically zero.
+    with ``V = mode_volume``: the total variance is pinned to thermodynamics and
+    the analytic curve supplies only the SHAPE. This renormalization is
+    deliberate documented behaviour, not a fudge factor -- it is what makes the
+    ``kondratiev_gorodetsky`` and ``single_pole`` TRN models carry the same
+    total power and differ only in spectral shape.
+
+    Examples
+    --------
+    >>> psd, var = kondratiev_gorodetsky_psd(
+    ...     T_k=300.0, kappa_th=4.6, rho=4.64e3, cp=700.0,
+    ...     R=1e-4, d_a=2e-6, d_b=1e-6, mode_volume=1e-15, f_max=1e10)
+    >>> print(f"{var:.4e}")            # k_B*T^2/(rho*C*V), Eq. 129 [K^2]
+    3.8257e-10
+    >>> bool(psd(1e3) > psd(1e6))      # red-tilted: falls with frequency
+    True
+
+    ``T_k = 0`` is the noise-off convention:
+
+    >>> psd0, var0 = kondratiev_gorodetsky_psd(
+    ...     T_k=0.0, kappa_th=4.6, rho=4.64e3, cp=700.0,
+    ...     R=1e-4, d_a=2e-6, d_b=1e-6, mode_volume=1e-15, f_max=1e10)
+    >>> var0, float(psd0(1e3))
+    (0.0, 0.0)
+
+    A near-circular mode is rejected rather than silently mis-normalized:
+
+    >>> kondratiev_gorodetsky_psd(
+    ...     T_k=300.0, kappa_th=4.6, rho=4.64e3, cp=700.0,
+    ...     R=1e-4, d_a=1.0e-6, d_b=1.0e-6, mode_volume=1e-15, f_max=1e10)
+    Traceback (most recent call last):
+        ...
+    ValueError: Kondratiev-Gorodetsky PSD requires d_a >= 1.2*d_b ...
     """
     T_k = float(T_k)
     if not (d_a > 0.0 and d_b > 0.0 and R > 0.0):
@@ -257,18 +483,54 @@ def kondratiev_gorodetsky_psd(
     return _psd, var_eq129
 
 
-def csv_psd(csv_path: str | Path):
-    """One-sided PSD from a two-column CSV ``f [Hz], S`` (e.g. measured/FEM).
+def csv_psd(csv_path: str | Path) -> Callable[[np.ndarray], np.ndarray]:
+    """Build a one-sided PSD from a two-column ``f [Hz], S`` CSV.
 
-    Follows the Huang et al. 2019 style of tabulated thermorefractive
-    spectra: values are interpolated LINEARLY IN LOG-LOG space (power laws
-    become straight lines) and clamped FLAT outside the tabulated span
-    (S(f < f_min) = S(f_min), S(f > f_max) = S(f_max)). f = 0 is guarded by
-    the low-side clamp (the engine additionally clamps its DC bin). Rows
-    with non-positive f or S are dropped (log space); at least two valid
-    rows are required. Units of S are whatever the file tabulates — the
-    caller selects the interpretation (S_dT [K^2/Hz] vs S_domega
-    [(rad/s)^2/Hz]) via the ``trn_csv_units`` config key.
+    Parameters
+    ----------
+    csv_path : str or pathlib.Path
+        Path to a comma-separated two-column file: frequency [Hz] and
+        one-sided spectral density S. Typically a measured or FEM-computed
+        thermorefractive spectrum.
+
+    Returns
+    -------
+    callable
+        ``S(f)`` mapping frequency [Hz] to the tabulated one-sided PSD, same
+        shape as its argument. Units are whatever the file tabulates -- the
+        caller selects the interpretation (``S_dT`` [K**2/Hz] versus
+        ``S_domega`` [(rad/s)**2/Hz]) through the ``trn_csv_units`` config key.
+
+    Raises
+    ------
+    ValueError
+        If the file has fewer than two columns, or if fewer than two rows
+        survive the ``f > 0 and S > 0`` filter that log-log interpolation
+        requires.
+    OSError
+        Propagated from ``numpy.loadtxt`` if the file cannot be read.
+
+    Notes
+    -----
+    Follows the Huang et al. (2019) style of tabulated thermorefractive
+    spectra: values are interpolated LINEARLY IN LOG-LOG space, so tabulated
+    power laws become straight lines, and clamped FLAT outside the tabulated
+    span (``S(f < f_min) = S(f_min)``, ``S(f > f_max) = S(f_max)``). ``f = 0``
+    is guarded by the low-side clamp, and :func:`synthesize_from_psd`
+    additionally clamps its own DC bin. Rows with non-positive ``f`` or ``S``
+    are dropped, since neither has a logarithm.
+
+    Examples
+    --------
+    A two-point table is a single power law between the tabulated points and
+    flat outside them:
+
+    >>> import pathlib, tempfile
+    >>> path = pathlib.Path(tempfile.mkdtemp()) / "psd.csv"
+    >>> _ = path.write_text("1.0,1e-06" + chr(10) + "1000.0,1e-12" + chr(10))
+    >>> psd = csv_psd(path)
+    >>> [f"{float(psd(f)):.3e}" for f in (0.1, 1.0, 10.0, 1000.0, 1e5)]
+    ['1.000e-06', '1.000e-06', '1.000e-08', '1.000e-12', '1.000e-12']
     """
     path = Path(csv_path)
     data = np.loadtxt(path, delimiter=",", dtype=np.float64)

@@ -106,25 +106,82 @@ def _sha256_bytes(data: bytes) -> str:
 
 
 def config_block_sha256(physical_params: dict[str, Any]) -> str:
-    """Deterministic sha256 of a resolved ``physical_parameters`` block.
+    """Hash a resolved ``physical_parameters`` block deterministically.
 
-    Canonicalized with ``json.dumps(..., sort_keys=True)`` so the hash is
-    invariant to key order and float formatting round-trips through Python's
-    repr, i.e. it pins the *resolved values* the run actually used rather than
-    the raw YAML byte layout.
+    Parameters
+    ----------
+    physical_params : dict
+        The RESOLVED parameter block -- the values the run actually used, after
+        defaults and overrides, not the raw YAML. Values may be any type
+        ``json.dumps`` accepts, plus anything ``float()`` can convert.
+
+    Returns
+    -------
+    str
+        64 lowercase hex characters.
+
+    Raises
+    ------
+    TypeError
+        If a value is neither JSON-serialisable nor convertible by ``float``.
+
+    Notes
+    -----
+    Canonicalized with ``json.dumps(..., sort_keys=True)``, so the digest is
+    invariant to key ORDER and to float formatting round-tripping through
+    Python's repr. Hashing the resolved values rather than the YAML bytes is
+    deliberate: two configs that differ only in comments, key order or
+    whitespace describe the same run and must hash the same, while a changed
+    default that silently alters a value must not.
+
+    Examples
+    --------
+    >>> a = config_block_sha256({"kappa_i_rad_per_s": 1.0, "T_k": 300.0})
+    >>> b = config_block_sha256({"T_k": 300.0, "kappa_i_rad_per_s": 1.0})
+    >>> len(a), a == b
+    (64, True)
+    >>> a == config_block_sha256({"T_k": 301.0, "kappa_i_rad_per_s": 1.0})
+    False
     """
     canon = json.dumps(physical_params, sort_keys=True, default=float)
     return _sha256_bytes(canon.encode("utf-8"))
 
 
 def noise_config_sha256(nc: "NoiseConfig") -> str:
-    """Content hash of a :class:`~simulator.noise_config.NoiseConfig`.
+    """Return the content hash of a :class:`~simulator.noise_config.NoiseConfig`.
 
-    Delegates to :meth:`NoiseConfig.sha256` rather than re-canonicalizing here,
-    so this digest cannot drift from the ``noise_config_sha256`` already
-    recorded in the noise-off identity manifests
-    (``validation/noise_off_identity.py``). Changes iff any field changes;
-    invariant to field *declaration* order.
+    Parameters
+    ----------
+    nc : NoiseConfig
+        The resolved noise configuration of a run.
+
+    Returns
+    -------
+    str
+        64 lowercase hex characters, identical to ``nc.sha256()``.
+
+    Raises
+    ------
+    AttributeError
+        If ``nc`` is not a :class:`~simulator.noise_config.NoiseConfig` (or
+        anything else exposing ``sha256()``).
+
+    Notes
+    -----
+    Delegates to :meth:`~simulator.noise_config.NoiseConfig.sha256` rather than
+    re-canonicalizing here, so this digest cannot drift from the
+    ``noise_config_sha256`` already recorded in the noise-off identity manifests
+    in ``validation/noise_off_identity.py``. The digest changes iff a field
+    VALUE changes and is invariant to field DECLARATION order.
+
+    Examples
+    --------
+    >>> from simulator.noise_config import NoiseConfig
+    >>> noise_config_sha256(NoiseConfig()) == NoiseConfig().sha256()
+    True
+    >>> noise_config_sha256(NoiseConfig()) == noise_config_sha256(
+    ...     NoiseConfig(trn=True))
+    False
     """
     return nc.sha256()
 
@@ -163,13 +220,41 @@ def _blas_name() -> str:
 
 
 def env_fingerprint() -> dict[str, Any]:
-    """Fingerprint of the numerical environment, for reproducing a run.
+    """Fingerprint the numerical environment, for reproducing a run.
 
-    Every probe is individually guarded: an environment where JAX is missing,
-    a backend is unavailable, or ``numpy.show_config`` misbehaves yields
-    ``"unknown"`` for that field rather than an exception. This function never
-    raises -- it sits on the solver's return path and must not be able to fail
-    a run that has already computed its physics.
+    Returns
+    -------
+    dict
+        Eight string-valued keys: ``python``, ``platform``, ``numpy``, ``jax``,
+        ``jaxlib``, ``backend``, ``device_kind`` and ``blas``. Any probe that
+        cannot be answered reports ``"unknown"`` (or ``"none"`` when JAX
+        reports no devices at all).
+
+    Raises
+    ------
+    None
+        By construction. Every probe is individually guarded, so a missing JAX,
+        an unavailable backend, or a misbehaving ``numpy.show_config`` degrades
+        that one field rather than raising. This function sits on the solver's
+        RETURN path and must not be able to fail a run that has already computed
+        its physics.
+
+    Notes
+    -----
+    These eight fields are the ones that decide bit-level reproducibility. The
+    BLAS vendor and the device kind matter as much as the library versions:
+    XLA vectorizes and reassociates reductions according to the CPU it finds, so
+    the same source on the same versions can produce a different -- equally
+    valid -- rounding on a machine with a different SIMD width. A stamp that
+    records only versions cannot explain such a difference.
+
+    Examples
+    --------
+    >>> fp = env_fingerprint()
+    >>> sorted(fp)
+    ['backend', 'blas', 'device_kind', 'jax', 'jaxlib', 'numpy', 'platform', 'python']
+    >>> all(isinstance(v, str) for v in fp.values())
+    True
     """
     fp: dict[str, Any] = {
         "python": platform.python_version(),
@@ -224,20 +309,76 @@ def provenance_stamp(
 ) -> dict[str, Any]:
     """Build a provenance dict for a generated report.
 
-    Args:
-        script: repo-relative path of the generating script.
-        seed: RNG seed used for the run.
-        physical_params: the resolved ``physical_parameters`` block; hashed
-            (canonical JSON) into ``physical_parameters_sha256``. Required in
-            the default (new) mode.
-        config_path: base YAML config; in ``legacy`` mode its whole-file bytes
-            are hashed into ``base_config_sha256`` (the quantum-report field).
-        quick: value of the report's ``quick`` flag (new mode only).
-        legacy: reproduce the quantum-noise-report stamp exactly (full commit
-            hash, whole-file config hash, no quick/timestamp fields).
+    Parameters
+    ----------
+    script : str
+        Repo-relative path of the generating script.
+    seed : int
+        RNG seed used for the run (dimensionless).
+    physical_params : dict or None, optional
+        The resolved ``physical_parameters`` block, hashed with
+        :func:`config_block_sha256` into ``physical_parameters_sha256``.
+        Required in the default (new) mode. Keyword-only.
+    config_path : str or pathlib.Path or None, optional
+        Base YAML config. In ``legacy`` mode its WHOLE-FILE bytes are hashed
+        into ``base_config_sha256``. Keyword-only.
+    quick : bool or None, optional
+        Value of the report's ``quick`` flag; omitted from the stamp when
+        ``None``. New mode only. Keyword-only.
+    legacy : bool, optional
+        Reproduce the quantum-noise-report stamp exactly -- full commit hash,
+        whole-file config hash, and no ``quick`` or timestamp fields. Default
+        ``False``. Keyword-only.
 
-    Returns:
-        An insertion-ordered dict suitable for JSON serialization.
+    Returns
+    -------
+    dict
+        Insertion-ordered and JSON-serialisable. New mode:
+        ``script``, ``git_commit`` (12-char short hash),
+        ``physical_parameters_sha256``, ``seed``, optionally ``quick``, then
+        ``generated_utc`` (``%Y-%m-%dT%H:%M:%SZ``). Legacy mode: ``script``,
+        ``git_commit`` (full hash), ``base_config_sha256``, ``seed``.
+
+    Raises
+    ------
+    ValueError
+        If ``legacy`` is set without ``config_path``, or if the default mode is
+        used without ``physical_params``.
+    OSError
+        In legacy mode, if ``config_path`` cannot be read.
+
+    Notes
+    -----
+    The legacy mode exists so that regenerating
+    ``analysis/results/quantum_noise_report.json`` leaves its committed content
+    byte-identical; it is not a deprecated path so much as a frozen one.
+
+    ``generated_utc`` makes the new-mode stamp deliberately NOT reproducible,
+    which is why the solver only attaches a stamp when explicitly asked
+    (``provenance=True``): the golden whole-dict hashes assume the legacy key
+    set.
+
+    Examples
+    --------
+    >>> stamp = provenance_stamp("scripts/demo.py", seed=7,
+    ...                          physical_params={"T_k": 300.0})
+    >>> list(stamp)
+    ['script', 'git_commit', 'physical_parameters_sha256', 'seed', 'generated_utc']
+    >>> stamp["seed"], len(stamp["physical_parameters_sha256"])
+    (7, 64)
+
+    ``quick`` appears only when it was given:
+
+    >>> list(provenance_stamp("scripts/demo.py", seed=7,
+    ...                       physical_params={"T_k": 300.0}, quick=True))
+    ['script', 'git_commit', 'physical_parameters_sha256', 'seed', 'quick', 'generated_utc']
+
+    Neither mode will produce an under-specified stamp:
+
+    >>> provenance_stamp("scripts/demo.py", seed=7)
+    Traceback (most recent call last):
+        ...
+    ValueError: new-style provenance needs physical_params (resolved block hash).
     """
     if legacy:
         if config_path is None:
@@ -296,30 +437,66 @@ def save_artifact(
     *,
     provenance: dict[str, Any],
 ) -> Path:
-    """Write ``<path>.npz`` + ``<path>.provenance.json`` atomically.
+    """Write ``<path>.npz`` and ``<path>.provenance.json`` atomically.
 
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        Artifact stem; a trailing ``.npz`` is accepted and stripped, so
+        ``"run"`` and ``"run.npz"`` name the same artifact.
+    arrays : dict
+        Mapping of name to array, stored with ``numpy.savez``.
+    meta : dict
+        Run metadata, stored in the sidecar under ``"meta"``.
+    provenance : dict
+        The stamp from :func:`provenance_stamp`, stored in the sidecar under
+        ``"provenance"``. Keyword-only.
+
+    Returns
+    -------
+    pathlib.Path
+        Path of the written ``.npz``.
+
+    Raises
+    ------
+    OSError
+        If the parent directory cannot be created, or either file cannot be
+        written or moved into place.
+    TypeError
+        From ``json.dump`` only for a value neither serialisable nor
+        ``str``-representable; the writer passes ``default=str``, so this is
+        close to unreachable.
+
+    Notes
+    -----
     Both files are written to ``.tmp`` siblings and then moved into place with
     :func:`os.replace`, which is atomic within a filesystem. The ARRAYS land
-    first and the SIDECAR second, so the failure modes are:
+    first and the SIDECAR second, so the only two interruption outcomes are:
 
-    * interrupted before either move -> neither file appears;
-    * interrupted between the moves -> arrays present, sidecar absent, and
+    * interrupted before either move -- neither file appears;
+    * interrupted between the moves -- arrays present, sidecar absent, and
       :func:`load_artifact` refuses to load them.
 
-    An interrupted run can therefore never leave a half-written ``.npz``
-    paired with a valid-looking stamp, which is the failure that silently
-    poisons a benchmark table.
+    An interrupted run can therefore never leave a half-written ``.npz`` paired
+    with a valid-looking stamp, which is the failure that silently poisons a
+    benchmark table.
 
-    Args:
-        path: artifact stem (a trailing ``.npz`` is accepted).
-        arrays: name -> array mapping, stored with ``np.savez`` (NOT
-            ``savez_compressed``: DEFLATE output is not bit-stable across zlib
-            builds, cf. ``validation/noise_off_identity.py``).
-        meta: run metadata stored alongside the stamp under ``"meta"``.
-        provenance: the stamp, stored under ``"provenance"``.
+    ``numpy.savez`` rather than ``savez_compressed`` is deliberate: DEFLATE
+    output is not bit-stable across zlib builds, and these artifacts are
+    compared byte-for-byte (cf. ``validation/noise_off_identity.py``).
 
-    Returns:
-        The path of the written ``.npz``.
+    Examples
+    --------
+    >>> import numpy as np, pathlib, tempfile
+    >>> stem = pathlib.Path(tempfile.mkdtemp()) / "run"
+    >>> stamp = provenance_stamp("scripts/demo.py", seed=7,
+    ...                          physical_params={"T_k": 300.0})
+    >>> written = save_artifact(stem, {"U_int": np.arange(3.0)},
+    ...                         {"note": "demo"}, provenance=stamp)
+    >>> written.name
+    'run.npz'
+    >>> written.with_name("run.provenance.json").exists()
+    True
     """
     npz_path, sidecar_path = _artifact_paths(path)
     npz_path.parent.mkdir(parents=True, exist_ok=True)
@@ -351,19 +528,60 @@ def save_artifact(
 
 
 def load_artifact(path: str | Path) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
-    """Load ``<path>.npz`` and its provenance sidecar.
+    """Load ``<path>.npz`` together with its provenance sidecar.
 
-    Returns:
-        ``(arrays, provenance)`` where ``provenance`` is the WHOLE sidecar
-        record -- ``{"provenance": <stamp>, "meta": ..., "arrays": [...]}`` --
-        not just the stamp, so the ``meta`` passed to :func:`save_artifact` is
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        Artifact stem; a trailing ``.npz`` is accepted and stripped.
+
+    Returns
+    -------
+    arrays : dict of str to numpy.ndarray
+        Every array stored in the ``.npz``, keyed by name.
+    provenance : dict
+        The WHOLE sidecar record --
+        ``{"provenance": <stamp>, "meta": ..., "arrays": [...]}`` -- not just
+        the stamp, so the ``meta`` passed to :func:`save_artifact` is
         recoverable from the round trip.
 
-    Raises:
-        FileNotFoundError: if the ``.npz`` is missing, or -- deliberately --
-            if the sidecar is missing. An artifact without its stamp is not a
-            usable benchmark input, and returning the arrays anyway would let
-            an unattributable file flow into a results table.
+    Raises
+    ------
+    FileNotFoundError
+        If the ``.npz`` is missing, or -- deliberately -- if the sidecar is
+        missing. An artifact without its stamp is not a usable benchmark input,
+        and returning the arrays anyway would let an unattributable file flow
+        into a results table.
+    ValueError
+        From ``numpy.load`` if the archive is corrupt, or if it contains a
+        pickled object (loading is ``allow_pickle=False``).
+
+    Notes
+    -----
+    The refusal to load an unstamped artifact is the whole point of the pair:
+    :func:`save_artifact` guarantees the sidecar is never newer than the arrays,
+    and this function guarantees the arrays are never read without it.
+
+    Examples
+    --------
+    >>> import numpy as np, pathlib, tempfile
+    >>> stem = pathlib.Path(tempfile.mkdtemp()) / "run"
+    >>> stamp = provenance_stamp("scripts/demo.py", seed=7,
+    ...                          physical_params={"T_k": 300.0})
+    >>> _ = save_artifact(stem, {"U_int": np.arange(3.0)}, {"note": "demo"},
+    ...                   provenance=stamp)
+    >>> arrays, record = load_artifact(stem)
+    >>> arrays["U_int"]
+    array([0., 1., 2.])
+    >>> sorted(record), record["meta"]
+    (['arrays', 'meta', 'provenance'], {'note': 'demo'})
+
+    A stem with no artifact behind it is an error, not an empty result:
+
+    >>> load_artifact(pathlib.Path(tempfile.mkdtemp()) / "absent")
+    Traceback (most recent call last):
+        ...
+    FileNotFoundError: artifact arrays missing: ...absent.npz
     """
     npz_path, sidecar_path = _artifact_paths(path)
     if not npz_path.exists():

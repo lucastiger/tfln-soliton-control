@@ -227,7 +227,45 @@ TOLERANCES = {
 # PART 1 — the parameter translation table
 # ==========================================================================
 def load_device(config_path: Path | None = None) -> dict:
-    """Read the committed SiN device parameters (all leaves plain numbers)."""
+    """Read the committed device parameters that both codes are driven from.
+
+    Parameters
+    ----------
+    config_path : pathlib.Path or None, optional
+        Config to read; ``None`` (default) uses ``config/sin_params.yaml``.
+
+    Returns
+    -------
+    dict
+        ``fsr_hz`` [Hz], ``pump_wavelength_m`` [m], ``pin_w`` [W],
+        ``kappa_i_rad_per_s`` and ``kappa_c_rad_per_s`` [rad/s], ``n0``
+        [dimensionless], ``n2_m2_per_w`` [m**2/W],
+        ``effective_mode_area_m2`` [m**2] and ``gamma_LLE_per_J_per_s``
+        [J^-1 s^-1].
+
+    Raises
+    ------
+    OSError
+        If the config cannot be read.
+    KeyError
+        If ``physical_parameters`` or any of the nine keys is absent. Every one
+        is required: a cross-code comparison cannot fall back to a default for
+        a device parameter without silently comparing two different devices.
+
+    Notes
+    -----
+    Only these nine leaves are read, and each is coerced to ``float``. Every
+    leaf under ``physical_parameters`` is a plain number by repository
+    convention, so nothing here needs to interpret a boolean or a string.
+
+    Examples
+    --------
+    >>> device = load_device()
+    >>> sorted(device)
+    ['effective_mode_area_m2', 'fsr_hz', 'gamma_LLE_per_J_per_s', 'kappa_c_rad_per_s', 'kappa_i_rad_per_s', 'n0', 'n2_m2_per_w', 'pin_w', 'pump_wavelength_m']
+    >>> all(isinstance(v, float) for v in device.values())
+    True
+    """
     import yaml
 
     src = Path(config_path) if config_path else REPO_ROOT / "config" / "sin_params.yaml"
@@ -260,6 +298,39 @@ def derived_config(fsr_hz: float, out_dir: Path) -> str:
     The committed ``config/sin_params.yaml`` is never modified. Both overrides
     are plain floats, so every leaf under ``physical_parameters`` still parses
     as a number and ``tests/test_config.py`` is unaffected.
+
+    Parameters
+    ----------
+    fsr_hz : float
+        FSR [Hz] to write, normally ``D1_csv/(2*pi)`` from the fitted
+        dispersion rather than the config's nominal value.
+    out_dir : pathlib.Path
+        Directory the derived config is written into.
+
+    Returns
+    -------
+    str
+        Path of the written ``pylle_crosscheck_config.yaml``.
+
+    Raises
+    ------
+    AssertionError
+        If the derived config changed the ``physical_parameters`` key set, or
+        if any leaf other than the two overridden ones failed to survive the
+        YAML round trip bit-for-bit.
+    OSError
+        If the source cannot be read or the destination cannot be written.
+
+    Notes
+    -----
+    Checking every leaf directly is stronger than re-deriving the config
+    test's allowlist here, and it cannot drift out of sync with it. A float
+    that did not survive ``safe_dump`` -> ``safe_load`` unchanged would
+    silently perturb one code's run and not the other's, which is precisely the
+    class of bug this whole module exists to catch.
+
+    No ``Examples`` section: it writes a file into a caller-supplied directory
+    and reads the committed config.
     """
     import yaml
 
@@ -331,6 +402,53 @@ def ours_to_pylle(ours: dict, f_pmp_hz: float | None = None) -> dict:
     then L/(2*pi); pyLLE's kernel only ever uses R through L = 2*pi*R in the
     Kerr term, so only the PRODUCT gamma_NLSE*L is physically constrained, and
     the identity above pins it exactly.
+
+    Parameters
+    ----------
+    ours : dict
+        Device parameters as returned by :func:`load_device`.
+    f_pmp_hz : float or None, optional
+        Pump frequency [Hz]. ``None`` (default) uses ``c/pump_wavelength_m``.
+        The caller overrides it so the pump is pinned to the mode the
+        dispersion grid is referenced to, which is NOT the nominal wavelength.
+
+    Returns
+    -------
+    dict
+        ``f_pmp_hz`` [Hz], ``omega0_rad_per_s`` [rad/s],
+        ``pump_wavelength_m_nominal`` [m], ``t_r_s`` [s], ``Pin_w`` [W],
+        ``Qi`` / ``Qc`` [dimensionless], ``gamma_nlse_per_w_per_m``
+        [W^-1 m^-1], ``n_g`` [dimensionless], ``L_cav_m`` [m], ``R_m`` [m],
+        ``D1_manual_rad_per_s`` [rad/s], ``phi_pmp_rad`` [rad], ``n0``
+        [dimensionless], ``n2_m2_per_w`` [m**2/W] and ``Aeff_m2`` [m**2].
+
+    Raises
+    ------
+    KeyError
+        If ``ours`` is missing a device parameter.
+    ZeroDivisionError
+        If the pump wavelength, the FSR, the effective area or ``gamma_LLE``
+        is zero.
+
+    Examples
+    --------
+    >>> forward = ours_to_pylle(load_device())
+    >>> sorted(forward)[:5]
+    ['Aeff_m2', 'D1_manual_rad_per_s', 'L_cav_m', 'Pin_w', 'Qc']
+
+    The identity the round trip rests on, ``gamma_NLSE*L/t_r**2 == gamma_LLE``:
+
+    >>> device = load_device()
+    >>> lhs = (forward["gamma_nlse_per_w_per_m"] * forward["L_cav_m"]
+    ...        / forward["t_r_s"] ** 2)
+    >>> bool(abs(lhs / device["gamma_LLE_per_J_per_s"] - 1) < 1e-12)
+    True
+
+    The pump phase is fixed at -pi/2 so pyLLE's drive comes out real and
+    positive:
+
+    >>> bool(abs(forward["phi_pmp_rad"] + 3.141592653589793 / 2) < 1e-15)
+    True
     """
     lam = ours["pump_wavelength_m"]
     fsr = ours["fsr_hz"]
@@ -371,7 +489,46 @@ def ours_to_pylle(ours: dict, f_pmp_hz: float | None = None) -> dict:
 
 
 def pylle_to_ours(q: dict) -> dict:
-    """Exact inverse of :func:`ours_to_pylle` (the round-trip leg)."""
+    """Invert :func:`ours_to_pylle` -- the round-trip leg of the translation check.
+
+    Parameters
+    ----------
+    q : dict
+        pyLLE-side parameters as produced by :func:`ours_to_pylle`.
+
+    Returns
+    -------
+    dict
+        The nine device parameters of :func:`load_device`, in SI:
+        ``fsr_hz`` [Hz], ``pump_wavelength_m`` [m], ``pin_w`` [W],
+        ``kappa_i_rad_per_s`` / ``kappa_c_rad_per_s`` [rad/s], ``n0``
+        [dimensionless], ``n2_m2_per_w`` [m**2/W],
+        ``effective_mode_area_m2`` [m**2] and ``gamma_LLE_per_J_per_s``
+        [J^-1 s^-1].
+
+    Raises
+    ------
+    KeyError
+        If ``q`` is missing a key the inversion needs.
+    ZeroDivisionError
+        If ``t_r_s``, ``Qi`` or ``Qc`` is zero.
+
+    Notes
+    -----
+    Every relation is an exact algebraic inversion, except
+    ``gamma_LLE = gamma_NLSE * L / t_r**2``, which round-trips through the
+    derived ``n_g`` and ``L`` -- those factors cancel identically, which is why
+    :func:`assert_round_trip` can hold it to the same 1e-12 as the rest.
+
+    Examples
+    --------
+    >>> device = load_device()
+    >>> rebuilt = pylle_to_ours(ours_to_pylle(device))
+    >>> sorted(rebuilt) == sorted(device)
+    True
+    >>> all(abs(rebuilt[k] - device[k]) <= 1e-12 * abs(device[k]) for k in device)
+    True
+    """
     omega0 = q["omega0_rad_per_s"]
     fsr = 1.0 / q["t_r_s"]
     return {
@@ -397,6 +554,46 @@ def assert_round_trip(ours: dict, rtol: float = 1e-12, f_pmp_hz: float | None = 
     that is NOT a pure inversion is gamma_LLE, which round-trips through the
     derived n_g and L; the docstring of :func:`ours_to_pylle` shows the n_g and
     L factors cancel identically, so it is held to the same 1e-12.
+
+    Parameters
+    ----------
+    ours : dict
+        Device parameters as returned by :func:`load_device`.
+    rtol : float, optional
+        Relative bound [dimensionless] every scalar must round-trip within,
+        default 1e-12.
+    f_pmp_hz : float or None, optional
+        Pump frequency [Hz] to translate at; ``None`` (default) derives it from
+        the nominal wavelength.
+
+    Returns
+    -------
+    dict
+        One entry per parameter with ``ours``, ``round_trip`` and ``rel_diff``
+        [dimensionless], plus ``_worst_rel_diff``.
+
+    Raises
+    ------
+    AssertionError
+        On the FIRST parameter that exceeds ``rtol``, naming it and both
+        values. A translation bug is not something to average over.
+    KeyError
+        If ``ours`` is missing a parameter.
+
+    Notes
+    -----
+    This is criterion H1, and it is HARD: it holds for any correct
+    implementation of the translation, independently of what either solver
+    computes. Anything above 1e-12 is a translation bug, not a physics
+    disagreement.
+
+    Examples
+    --------
+    >>> report = assert_round_trip(load_device())
+    >>> bool(report["_worst_rel_diff"] <= 1e-12)
+    True
+    >>> sorted(report["fsr_hz"])
+    ['ours', 'rel_diff', 'round_trip']
     """
     fwd = ours_to_pylle(ours, f_pmp_hz=f_pmp_hz)
     back = pylle_to_ours(fwd)
@@ -417,6 +614,36 @@ def assert_round_trip(ours: dict, rtol: float = 1e-12, f_pmp_hz: float | None = 
 
 
 def print_translation_table(ours: dict, fwd: dict, rt: dict) -> None:
+    """Print the parameter translation table and its round-trip residuals.
+
+    Parameters
+    ----------
+    ours : dict
+        Device parameters from :func:`load_device`.
+    fwd : dict
+        Their translation, from :func:`ours_to_pylle`.
+    rt : dict
+        The round-trip report from :func:`assert_round_trip`.
+
+    Returns
+    -------
+    None
+        Writes the table to stdout.
+
+    Raises
+    ------
+    KeyError
+        If any input is missing a parameter the table displays.
+
+    Notes
+    -----
+    Printed in full on every run, deliberately. The parameter map is where
+    cross-code comparisons go wrong, so it is written once, here, and shown
+    every time rather than left as something a reader has to reconstruct from
+    two config files.
+
+    No ``Examples`` section: it prints a wide formatted table.
+    """
     kappa = ours["kappa_i_rad_per_s"] + ours["kappa_c_rad_per_s"]
     print("=" * 78)
     print("PARAMETER TRANSLATION TABLE   (ours -> pyLLE)")
@@ -463,6 +690,54 @@ def cw_lower_branch(delta_omega: float, kappa: float, kappa_c: float,
     on the LOWER CW branch, which is why the smallest positive real root is
     taken (``analytic_cw.stable_branch`` takes the largest, for the upward-scan
     CW state -- a different question).
+
+    Parameters
+    ----------
+    delta_omega : float
+        Detuning ``omega_res - omega_pump`` [rad/s].
+    kappa : float
+        Total loss rate [rad/s].
+    kappa_c : float
+        Coupling rate [rad/s].
+    gamma : float
+        ``gamma_LLE`` [J^-1 s^-1].
+    pin : float
+        Pump power [W].
+
+    Returns
+    -------
+    complex
+        The CW amplitude ``E = sqrt(kappa_c*pin)/(kappa/2 + 1j*(dw - gamma*P))``
+        [sqrt(J)], on the lower branch.
+
+    Raises
+    ------
+    numpy.linalg.LinAlgError
+        Propagated from ``numpy.roots`` for a degenerate cubic.
+
+    Notes
+    -----
+    Returns the AMPLITUDE, not the power, because the soliton seed needs the
+    background's phase as well as its magnitude: seeding a sech on a background
+    of the wrong phase radiates a transient that the existence scan would then
+    have to settle through.
+
+    If no positive real root exists the largest root modulus is used as a
+    fallback, so the seed builder degrades rather than raising at an operating
+    point outside the CW solution set.
+
+    Examples
+    --------
+    >>> e_cw = cw_lower_branch(2e9, 1.5e8, 1.2e8, 1.03e18, 0.214)
+    >>> isinstance(e_cw, complex)
+    True
+
+    It satisfies the CW steady-state equation it was derived from:
+
+    >>> p = abs(e_cw) ** 2
+    >>> lhs = p * ((1.5e8 / 2) ** 2 + (2e9 - 1.03e18 * p) ** 2)
+    >>> bool(abs(lhs / (1.2e8 * 0.214) - 1) < 1e-9)
+    True
     """
     g, k2 = gamma, kappa / 2.0
     # gamma^2 P^3 - 2*gamma*dw P^2 + (k2^2 + dw^2) P - kappa_c*Pin = 0
@@ -486,6 +761,66 @@ def soliton_seed(n_modes: int, delta_omega: float, kappa: float, kappa_c: float,
     theta is the FFT fast-time grid theta_j = 2*pi*j/n_modes, wrapped to
     (-pi, pi] so the pulse sits at theta = 0. No randomness: the same array is
     handed to BOTH codes (pyLLE gets conj(E)/sqrt(t_r); Finding 5).
+
+    Parameters
+    ----------
+    n_modes : int
+        Number of modes and fast-time samples.
+    delta_omega : float
+        Detuning [rad/s]. Must be positive -- the red-detuned, soliton side.
+    kappa : float
+        Total loss rate [rad/s].
+    kappa_c : float
+        Coupling rate [rad/s].
+    gamma : float
+        ``gamma_LLE`` [J^-1 s^-1].
+    pin : float
+        Pump power [W].
+    d2 : float
+        Local second-order dispersion ``D_2`` [rad/s**2], which sets the
+        soliton width.
+
+    Returns
+    -------
+    numpy.ndarray
+        Shape ``(n_modes,)``, dtype ``complex128``, units sqrt(J).
+
+    Raises
+    ------
+    ValueError
+        If ``delta_omega <= 0``. A soliton ansatz has no meaning on the blue
+        side, and silently returning a CW background would make an existence
+        scan report a spurious lower edge.
+
+    Notes
+    -----
+    The sech is evaluated in the OVERFLOW-SAFE form
+    ``sech(x) = 2*exp(-|x|)/(1 + exp(-2|x|))``. At these detunings
+    ``theta/width`` reaches about 1500, where a naive ``1/cosh`` overflows and
+    returns EXACT zeros in the tails -- a hard-truncated seed whose
+    discontinuity radiates. The safe form underflows smoothly to zero instead.
+
+    No randomness anywhere: the identical array is handed to both codes, which
+    is what makes a difference in their outputs attributable to the solvers.
+
+    Examples
+    --------
+    >>> seed = soliton_seed(101, 2e9, 1.5e8, 1.2e8, 1.03e18, 0.214, 5e4)
+    >>> print(seed.shape, seed.dtype)
+    (101,) complex128
+
+    The pulse sits at the start of the grid (theta = 0) and decays away from it:
+
+    >>> import numpy as np
+    >>> int(np.argmax(np.abs(seed)))
+    0
+
+    The blue side is refused, not silently accepted:
+
+    >>> soliton_seed(101, -1.0, 1.5e8, 1.2e8, 1.03e18, 0.214, 5e4)
+    Traceback (most recent call last):
+        ...
+    ValueError: soliton seed requires delta_omega > 0 (red-detuned side)
     """
     if delta_omega <= 0:
         raise ValueError("soliton seed requires delta_omega > 0 (red-detuned side)")
@@ -517,6 +852,46 @@ def build_pylle_dispfile(path: Path, mu: np.ndarray, d_int_ours: np.ndarray,
     column 1 and ``D1_manual`` (``_analyzedisp.py:100-106``), so the offset
     cannot perturb the physics. ``D_int_ours(0) == 0`` makes row ``mu = 0``
     land exactly on ``f_pmp``, which is how pyLLE locates the pump (Finding 8).
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        Destination CSV.
+    mu : numpy.ndarray
+        Mode numbers [dimensionless], symmetric about 0.
+    d_int_ours : numpy.ndarray
+        ``D_int(mu)`` [rad/s] in OUR convention, same shape as ``mu``.
+    f_pmp_hz : float
+        Pump frequency [Hz], which row ``mu = 0`` must land on exactly.
+    d1 : float
+        ``D_1`` [rad/s], setting the linear term of the synthesised
+        resonances.
+    m0 : int
+        Absolute azimuthal order of the pump mode [dimensionless], so column 0
+        is ``m0 + mu``.
+
+    Returns
+    -------
+    None
+        Writes the CSV; nothing is returned.
+
+    Raises
+    ------
+    OSError
+        If ``path`` cannot be written.
+    ValueError
+        If ``mu`` and ``d_int_ours`` have different lengths.
+
+    Notes
+    -----
+    The mirror is applied HERE, by synthesising resonance frequencies from our
+    own ``D_int`` reversed, rather than by reusing the raw measured CSV and
+    flipping indices afterwards. That is what makes the sign convention a
+    property of the file both codes read, instead of a correction applied to
+    one code's output.
+
+    No ``Examples`` section: it writes a file for the out-of-process pyLLE
+    run to consume.
     """
     d_int_mirror = d_int_ours[::-1].copy()          # D_int(-mu) on a symmetric grid
     omega_p = 2.0 * math.pi * f_pmp_hz + d1 * mu + d_int_mirror
@@ -526,10 +901,43 @@ def build_pylle_dispfile(path: Path, mu: np.ndarray, d_int_ours: np.ndarray,
 
 
 def local_d2_from_dint(mu: np.ndarray, d_int: np.ndarray) -> float:
-    """Local D2 = d^2(D_int)/dmu^2 at mu=0, fitted over the smooth |mu|<=600 band.
+    """Fit the local second-order dispersion at the pump.
 
-    Uses the same defect-excluding window as ``lle_solver.load_dint_grid`` (that
-    CSV has a localized measurement artefact for |mu|<=5).
+    Parameters
+    ----------
+    mu : numpy.ndarray
+        Mode numbers [dimensionless].
+    d_int : numpy.ndarray
+        ``D_int(mu)`` [rad/s], same shape as ``mu``.
+
+    Returns
+    -------
+    float
+        ``D_2 = d**2(D_int)/dmu**2`` at ``mu = 0`` [rad/s**2], from a degree-6
+        fit over ``5 < |mu| <= 600``.
+
+    Raises
+    ------
+    ValueError
+        Propagated from the polynomial fit if fewer points fall inside the
+        window than the degree requires.
+
+    Notes
+    -----
+    Uses the same defect-excluding window as
+    :func:`~simulator.lle_solver.load_dint_grid`: the measured CSV carries a
+    localized artefact for ``|mu| <= 5``, and a fit that includes it biases
+    ``D_2`` -- which then sets the seed soliton's width, and so the initial
+    condition both codes start from.
+
+    Examples
+    --------
+    A pure quadratic recovers its own curvature exactly:
+
+    >>> import numpy as np
+    >>> mu = np.arange(-600, 601)
+    >>> print(f"{local_d2_from_dint(mu, 0.5 * 5e4 * mu ** 2):.6e}")
+    5.000000e+04
     """
     sel = (np.abs(mu) <= 600) & (np.abs(mu) > 5)
     poly = np.polynomial.Polynomial.fit(mu[sel].astype(float), d_int[sel], 6)
@@ -537,11 +945,39 @@ def local_d2_from_dint(mu: np.ndarray, d_int: np.ndarray) -> float:
 
 
 def spectrum_dbc(field: np.ndarray) -> np.ndarray:
-    """Per-mode power spectrum in dB relative to the strongest line (dBc).
+    """Compute the per-mode power spectrum in dB relative to the strongest line.
 
-    ``fftshift(fft(x))/N`` so bin values are per-mode amplitudes and the mu axis
-    is centred. Identical estimator on both sides -- that is what makes the
-    comparison fair, independent of each code's own plotting normalization.
+    Parameters
+    ----------
+    field : numpy.ndarray
+        Intracavity field, shape ``(n_modes,)``, complex, units sqrt(J).
+
+    Returns
+    -------
+    numpy.ndarray
+        Shape ``(n_modes,)``, dtype ``float64``, units dBc, mu-centred. The
+        strongest line is exactly 0 dBc.
+
+    Raises
+    ------
+    ValueError
+        Propagated from ``numpy.fft`` for an empty field.
+
+    Notes
+    -----
+    ``fftshift(fft(x))/N``, so bin values are per-mode amplitudes and the mu
+    axis is centred. The SAME estimator is applied to both codes' fields, which
+    is what makes the comparison fair: each code's own plotting normalization
+    is irrelevant because neither is used.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> n = 401
+    >>> tau = np.arange(n) - n // 2
+    >>> dbc = spectrum_dbc((1.0 / np.cosh(tau / 8.0)).astype(complex) + 0.1)
+    >>> print(dbc.shape, f"{dbc.max():.3f}")
+    (401,) 0.000
     """
     lines = np.fft.fftshift(np.fft.fft(field)) / field.size
     power = np.abs(lines) ** 2
@@ -549,12 +985,58 @@ def spectrum_dbc(field: np.ndarray) -> np.ndarray:
 
 
 def observables(field_ours: np.ndarray, t_r: float, mu: np.ndarray) -> dict:
-    """The four single-run observables, computed identically for both codes.
+    """Compute the single-run observables, identically for both codes.
 
-    ``field_ours`` is in OUR convention (sqrt(J)); pyLLE's field must already
-    have been mapped through ``conj(A)*sqrt(t_r)`` before arriving here, so the
-    mu -> -mu mirror of Finding 2 is applied by construction, not by fudging
-    indices after the fact.
+    Parameters
+    ----------
+    field_ours : numpy.ndarray
+        Final field in OUR convention, shape ``(n_modes,)``, complex, units
+        sqrt(J). pyLLE's field must ALREADY have been mapped through
+        ``conj(A)*sqrt(t_r)`` before arriving here.
+    t_r : float
+        Round-trip time [s].
+    mu : numpy.ndarray
+        Mode numbers [dimensionless], shape ``(n_modes,)``, mu-centred.
+
+    Returns
+    -------
+    dict
+        Dispersive-wave descriptors on each side --
+        ``dw_peak_mu_red`` / ``dw_peak_mu_blue`` [mode number],
+        ``dw_argmax_mu_*`` [mode number], ``dw_centroid_*`` [mode number],
+        ``dw_peak_dbc_*`` [dBc] -- plus ``spectral_span_3db_modes`` [modes],
+        ``soliton_peak_power_w`` [W] and ``comb_line_count_60dbc`` [count].
+
+    Raises
+    ------
+    IndexError
+        If ``mu`` and ``field_ours`` have different lengths.
+
+    Notes
+    -----
+    The mu -> -mu mirror is applied BY CONSTRUCTION, upstream, rather than by
+    fudging indices after the fact -- which is the difference between a
+    convention that is stated once and one that has to be re-derived at every
+    comparison.
+
+    The 3 dB span excludes the pump bin. The pump stands far above every comb
+    line, so a span measured against it collapses to the pump bin alone -- a
+    span of 0 on both sides, and a vacuous pass. Excluding it measures the
+    soliton's own envelope, which is both physically meaningful and a strictly
+    harder test.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> n = 401
+    >>> mu = np.arange(n) - n // 2
+    >>> tau = np.arange(n) - n // 2
+    >>> obs = observables((1.0 / np.cosh(tau / 8.0)).astype(complex) + 0.1,
+    ...                   t_r=4.0e-11, mu=mu)
+    >>> "soliton_peak_power_w" in obs and "spectral_span_3db_modes" in obs
+    True
+    >>> bool(obs["soliton_peak_power_w"] > 0)
+    True
     """
     dbc = spectrum_dbc(field_ours)
 
@@ -641,10 +1123,66 @@ def is_single_soliton(field_ours: np.ndarray, t_r: float, kappa: float,
                       gamma: float) -> tuple[bool, int, float]:
     """Classify a final state as a single localized soliton.
 
-    Localized == the peak stands well above the field's own background floor.
-    Counting peaks above the midpoint between background and peak separates a
-    single DKS from multi-soliton and from a CW / chaotic state, without
+    Parameters
+    ----------
+    field_ours : numpy.ndarray
+        Final field in OUR convention, shape ``(n_modes,)``, complex, units
+        sqrt(J).
+    t_r : float
+        Round-trip time [s].
+    kappa : float
+        Total loss rate [rad/s]. Accepted for signature stability; the
+        classification is threshold-free in ``kappa``.
+    gamma : float
+        ``gamma_LLE`` [J^-1 s^-1]. Likewise accepted and not used.
+
+    Returns
+    -------
+    single : bool
+        ``True`` iff exactly one connected component stands above the midpoint
+        between background and peak.
+    n_peaks : int
+        The number of such components; 0 when the field is not localized at
+        all.
+    contrast : float
+        ``max(power)/median(power)`` [dimensionless].
+
+    Raises
+    ------
+    ValueError
+        Propagated from ``numpy`` for an empty field.
+
+    Notes
+    -----
+    "Localized" means the peak stands well above the field's OWN background
+    floor -- the median power, not an absolute threshold -- so the test carries
+    over unchanged between operating points and between codes. Counting
+    connected components above the midpoint separates a single dissipative
+    Kerr soliton from a multi-soliton state and from CW or chaos, without
     reference to either code's internals.
+
+    The component count is CIRCULAR, matching the periodic fast-time domain: a
+    pulse straddling the wrap point is one soliton, not two.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> n = 401
+    >>> tau = np.arange(n) - n // 2
+    >>> single, n_peaks, contrast = is_single_soliton(
+    ...     (1.0 / np.cosh(tau / 8.0)).astype(complex) + 1e-3,
+    ...     t_r=4.0e-11, kappa=1.5e8, gamma=1.03e18)
+    >>> single, n_peaks
+    (True, 1)
+
+    Two pulses are two, and a flat field is not localized at all:
+
+    >>> two = ((1.0 / np.cosh((tau - 80) / 8.0))
+    ...        + (1.0 / np.cosh((tau + 80) / 8.0))).astype(complex) + 1e-3
+    >>> is_single_soliton(two, 4.0e-11, 1.5e8, 1.03e18)[:2]
+    (False, 2)
+    >>> is_single_soliton(np.ones(n, dtype=complex), 4.0e-11, 1.5e8, 1.03e18)[:2]
+    (False, 0)
     """
     power = np.abs(field_ours) ** 2 / t_r                       # W
     peak, floor = float(power.max()), float(np.median(power))
@@ -764,10 +1302,46 @@ def _worker_main(argv: list[str]) -> int:
 # ==========================================================================
 def run_ours(delta_omega_ramp: np.ndarray, seed: np.ndarray, d_int_fftorder: np.ndarray,
              dev: dict, config_path: str, n_substeps: int = 1) -> np.ndarray:
-    """Run this repo's solver over ``delta_omega_ramp`` from ``seed``.
+    """Run this repository's solver over a detuning ramp from a given seed.
 
-    ``n_substeps=1`` / ``fine_cadence_M=1`` match pyLLE's one-step-per-round-trip
-    kernel exactly (see MATCHED DISCRETIZATION in the module docstring).
+    Parameters
+    ----------
+    delta_omega_ramp : numpy.ndarray
+        Detuning per round trip [rad/s], shape ``(t_slow,)``.
+    seed : numpy.ndarray
+        Initial field, shape ``(n_modes,)``, complex, units sqrt(J).
+    d_int_fftorder : numpy.ndarray
+        ``D_int(mu)`` [rad/s], shape ``(n_modes,)``, in FFT-bin order.
+    dev : dict
+        Device parameters from :func:`load_device`.
+    config_path : str
+        The DERIVED config from :func:`derived_config`.
+    n_substeps : int, optional
+        Strang sub-steps per round trip [dimensionless], default 1.
+
+    Returns
+    -------
+    numpy.ndarray
+        Final field, shape ``(n_modes,)``, complex, units sqrt(J).
+
+    Raises
+    ------
+    AssertionError
+        If ``delta_omega_eff`` deviates from the programmed ramp, meaning the
+        thermo-optic shift is not off, or if the final field is non-finite.
+    ValueError
+        Propagated from the solver for a shape mismatch.
+
+    Notes
+    -----
+    ``n_substeps = 1`` with ``fine_cadence_M = 1`` matches pyLLE's
+    one-step-per-round-trip kernel EXACTLY. Matching the discretization is the
+    point: two codes integrating the same equation with different step counts
+    would differ for a reason that is nobody's error, and the resulting number
+    would not test either implementation.
+
+    No ``Examples`` section: it runs a multi-thousand-round-trip solve on a
+    6601-mode grid.
     """
     import jax
     from simulator.lle_solver import solve_lle_ssfm_jax
@@ -815,11 +1389,64 @@ def _br_tuple(br, kappa: float):
 
 
 def _rel(a: float, b: float) -> float:
+    """Symmetric relative difference, 0.0 when both values are 0.
+
+    Parameters
+    ----------
+    a, b : float
+        The two values, in any consistent unit.
+
+    Returns
+    -------
+    float
+        ``|a - b| / max(|a|, |b|)`` [dimensionless].
+
+    Examples
+    --------
+    >>> _rel(2.0, 1.0), _rel(0.0, 0.0)
+    (0.5, 0.0)
+    """
     denom = max(abs(a), abs(b))
     return abs(a - b) / denom if denom else 0.0
 
 
 def _verdict(name: str, ours, pylle, tol: float, exact: bool = False) -> dict:
+    """Compare one observable across the two codes and return a verdict record.
+
+    Parameters
+    ----------
+    name : str
+        Observable name, carried into the record.
+    ours, pylle : float or None
+        The two measured values, in the observable's own unit. ``None`` or NaN
+        means the observable could not be measured on that side.
+    tol : float
+        Tolerance [dimensionless relative, or absolute when ``exact``].
+    exact : bool, optional
+        Compare absolutely rather than relatively, default ``False``.
+
+    Returns
+    -------
+    dict
+        ``observable``, both values, ``abs_diff``, ``rel_diff``, ``tolerance``
+        and ``verdict`` (``'PASS'``, ``'FAIL'`` or ``'NOT_MEASURED'``).
+
+    Notes
+    -----
+    An observable that could not be measured on one or both sides is
+    ``NOT_MEASURED``, and that FAILS the overall run rather than passing
+    silently. A comparison that did not happen is not a comparison that
+    succeeded.
+
+    Examples
+    --------
+    >>> _verdict("peak_power_w", 1.0, 1.0, 1e-9)["verdict"]
+    'PASS'
+    >>> _verdict("peak_power_w", 1.0, 2.0, 1e-9)["verdict"]
+    'FAIL'
+    >>> _verdict("peak_power_w", None, 2.0, 1e-9)["verdict"]
+    'NOT_MEASURED'
+    """
     if ours is None or pylle is None or (
             isinstance(ours, float) and math.isnan(ours)) or (
             isinstance(pylle, float) and math.isnan(pylle)):
@@ -844,6 +1471,46 @@ def _verdict(name: str, ours, pylle, tol: float, exact: bool = False) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the v1 pyLLE cross-check from the command line.
+
+    Parameters
+    ----------
+    argv : list of str or None, optional
+        Command-line arguments; ``None`` (default) reads ``sys.argv[1:]``.
+        ``--pylle-python`` and ``--julia-bin`` locate the pyLLE
+        environment and default to the ``PYLLE_PYTHON`` and ``JULIA_BIN``
+        environment variables.
+
+    Returns
+    -------
+    int
+        The process exit status: 0 when every observable agreed within its
+        tolerance, non-zero otherwise.
+
+    Raises
+    ------
+    SystemExit
+        From ``argparse`` on a malformed command line or ``--help``.
+    AssertionError
+        From :func:`assert_round_trip` on a translation failure, or from
+        :func:`run_ours` if the run left the programmed ramp.
+    FileNotFoundError
+        If the pyLLE interpreter, the Julia binary or the dispersion CSV
+        cannot be found.
+
+    Notes
+    -----
+    pyLLE runs OUT OF PROCESS, under its own interpreter: it pins
+    ``numpy < 2`` and needs a Julia toolchain, so it cannot share an
+    environment with this solver. ``--worker`` is intercepted in ``__main__``
+    before this function is reached and is declared only so ``--help`` does not
+    reject it.
+
+    This is the v1 cross-check and is FROZEN; :mod:`validation.pylle_crosscheck_v2`
+    supersedes it.
+
+    No ``Examples`` section: it requires a provisioned pyLLE environment.
+    """
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     # --worker is intercepted in __main__ before main() is reached; it is
     # declared here only so --help does not reject it.
@@ -1333,7 +2000,51 @@ def main(argv: list[str] | None = None) -> int:
 
 def make_figure(mu, e_ours, e_pylle, t_r, dev, args, overall,
                 obs_ours=None, obs_pylle=None, kerr_phase=None) -> None:
-    """Two-panel overlay (spectrum, waveform) plus a residual sub-panel."""
+    """Draw the two-panel comparison figure and write it to disk.
+
+    Parameters
+    ----------
+    mu : numpy.ndarray
+        Mode numbers [dimensionless].
+    e_ours, e_pylle : numpy.ndarray
+        Final fields from each code, in OUR convention, complex, units sqrt(J).
+    t_r : float
+        Round-trip time [s].
+    dev : dict
+        Device parameters, for the annotation.
+    args : argparse.Namespace
+        Parsed command line, supplying the output path and run settings.
+    overall : str
+        The overall verdict, shown on the figure.
+    obs_ours, obs_pylle : dict or None, optional
+        Observable dicts from :func:`observables`, annotated when present.
+    kerr_phase : float or None, optional
+        Kerr phase per round trip [rad], annotated when present.
+
+    Returns
+    -------
+    None
+        Writes the figure to the path in ``args``.
+
+    Raises
+    ------
+    OSError
+        If the output path cannot be written.
+    ImportError
+        If matplotlib is unavailable.
+
+    Notes
+    -----
+    Spectrum and waveform overlaid on the same axes, with the residual in its
+    own sub-panel: a difference is only meaningful next to the thing it is a
+    difference of, and two side-by-side panels make a small disagreement
+    invisible.
+
+    Uses the ``Agg`` backend explicitly so the figure renders identically
+    headless.
+
+    No ``Examples`` section: it needs both codes' fields and writes a file.
+    """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt

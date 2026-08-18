@@ -41,6 +41,33 @@ def _spectrum_dbc(field):
 
 
 def main() -> int:
+    """Render the discretization-uncertainty figure from the committed artifacts.
+
+    Returns
+    -------
+    int
+        The process exit status: 0 on success.
+
+    Raises
+    ------
+    FileNotFoundError
+        If ``validation/results/convergence_lle_dw30k.json`` or its fields
+        archive is absent -- the study must have been run first.
+    KeyError
+        If the artifact predates a field the figure plots.
+    OSError
+        If the output image cannot be written.
+    ImportError
+        If matplotlib is unavailable.
+
+    Notes
+    -----
+    Reads the COMMITTED artifacts rather than re-running the study: the ladders
+    take a long time, and the figure's job is to display the frozen result, not
+    to reproduce it.
+
+    No ``Examples`` section: it reads committed artifacts and writes a file.
+    """
     data = json.loads(JSON_PATH.read_text())
     npz = np.load(NPZ_PATH)
     mu = npz["mu"]

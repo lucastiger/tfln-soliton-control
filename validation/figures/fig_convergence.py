@@ -65,7 +65,46 @@ def make_figure(
     weak: dict[str, Any],
     out_path: Path,
 ) -> Path:
-    """Render both panels from pre-computed study results."""
+    """Render the two-panel order-of-accuracy figure from pre-computed results.
+
+    Parameters
+    ----------
+    production : dict
+        Results for the SHIPPING scheme, from
+        :func:`validation.convergence.deterministic_study` and friends.
+    fixed : dict
+        The same for the fixed scheme (symmetric drive, Strang thermal
+        coupling, exponential integrator).
+    weak : dict
+        The weak-convergence study, from
+        :func:`validation.convergence.weak_study`.
+    out_path : pathlib.Path
+        Destination image.
+
+    Returns
+    -------
+    pathlib.Path
+        ``out_path``, for chaining.
+
+    Raises
+    ------
+    KeyError
+        If a study result is missing a series the figure plots.
+    OSError
+        If ``out_path`` cannot be written.
+    ImportError
+        If matplotlib is unavailable.
+
+    Notes
+    -----
+    Both schemes are plotted on the SAME axes with reference slopes, because
+    the finding is the difference between them: the shipping scheme is first
+    order and the fixed one second, and two separate plots would leave a reader
+    to compare gradients by eye across figures.
+
+    No ``Examples`` section: it takes completed refinement ladders and writes a
+    file.
+    """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -153,6 +192,35 @@ def make_figure(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run the convergence studies and render the figure from the command line.
+
+    Parameters
+    ----------
+    argv : sequence of str or None, optional
+        Command-line arguments; ``None`` (default) reads ``sys.argv[1:]``.
+        Supports ``--out``, ``--halvings``, ``--n-tau``, ``--t-slow``,
+        ``--weak-realizations`` and ``--quick``.
+
+    Returns
+    -------
+    int
+        The process exit status: 0 on success.
+
+    Raises
+    ------
+    SystemExit
+        From ``argparse`` on a malformed command line or ``--help``.
+    ImportError
+        If sympy (for the manufactured source) or matplotlib is unavailable.
+
+    Notes
+    -----
+    Runs the studies itself rather than reading a stored artifact, so the
+    figure cannot fall out of date with the numbers. ``--quick`` shortens the
+    ladders for a fast look.
+
+    No ``Examples`` section: every path runs the full refinement ladders.
+    """
     ap = argparse.ArgumentParser(
         prog="python -m validation.figures.fig_convergence",
         description="Render the order-of-accuracy figure.",

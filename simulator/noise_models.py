@@ -1,4 +1,45 @@
-"""Noise model implementations for TFLN simulation."""
+"""Noise-channel implementations for the stochastic-LLE benchmark.
+
+Each class here turns a ``physical_parameters`` mapping into (a) a closed-form
+one-sided power spectral density and (b) a sampler that draws a realization of
+that spectrum, one sample per cavity round trip at ``f_s = 1/t_r``. The solver
+consumes the realizations; the PSDs are the validation targets.
+
+Channels
+--------
+:class:`TRNoise`
+    Thermorefractive noise: a thermodynamic temperature fluctuation dT(t) [K]
+    pulled onto the resonance through
+    ``C_pull = (omega0/n0)*(dn_dT + n0*alpha_L)`` [rad/(s K)].
+:class:`PyroEONoise`
+    Pyro-electric charge release converted to a resonance shift by the
+    electro-optic effect, driven by the SAME dT(t) as :class:`TRNoise`.
+:class:`TCCRNoise`
+    Thermal carrier / surface-state noise: surface-charge shot noise seen
+    through the same electro-optic coefficient, on an INDEPENDENT stream.
+:class:`TotalNoise`
+    Their sum, with the shared-temperature correlation between TRN and Pyro-EO
+    handled explicitly rather than by adding independent draws.
+:class:`PumpNoise`
+    Pump-laser frequency noise [Hz**2/Hz] and relative intensity noise [1/Hz],
+    arXiv:2604.05897v1 Secs. V.B.4--V.B.5.
+
+Conventions
+-----------
+Every detuning-noise channel returns a contribution to ``delta_omega``
+[rad/s] under the repository's sign convention
+``delta_omega = omega_res - omega_pump``. Every sampler is deterministic in its
+JAX PRNG key: colored models synthesize HOST-SIDE in float64 through
+:mod:`simulator.colored_noise`, while the historical ``single_pole`` path keeps
+the traced AR(1) recursion and its float32 output, which is BIT-IDENTICAL to
+the pre-colored-noise code.
+
+A disabled channel returns exact zeros WITHOUT drawing from its key. That is
+safe for every other channel because JAX PRNG is functional -- consuming a key
+has no side effect -- but it makes the split ladders in
+:meth:`TotalNoise.sample_with_delta_t` load-bearing: they are unconditional, so
+toggling one channel can never shift another channel's stream.
+"""
 
 from __future__ import annotations
 
@@ -263,25 +304,117 @@ def _ar1_samples(key, N, tau_corr, sigma_physical, t_r,
 class TRNoise:
     """Thermorefractive (TRN) detuning noise with a pluggable PSD strategy.
 
-    ``trn_psd_model`` (config) selects the temperature-fluctuation spectrum:
+    Parameters
+    ----------
+    cfg : dict
+        The ``physical_parameters`` mapping. Keys read (with units and
+        defaults): ``fsr_hz`` [Hz, 2e11], ``pump_wavelength_m`` [m, 1.55e-6],
+        ``n0`` [dimensionless, 2.2], ``dn_dT_per_k`` [1/K, 4e-5],
+        ``alpha_L_per_k`` [1/K, 0.0], ``tau_th_s`` [s, 5e-6],
+        ``rho_kg_per_m3`` [kg/m**3, 4640], ``Cp_j_per_kg_k`` [J/(kg K), 700],
+        ``mode_volume_m3`` [m**3, 1e-15], ``kappa_th_w_per_m_k`` [W/(m K), 4.6],
+        ``T_k`` [K, 300], ``trn_psd_model`` [str, ``'single_pole'``] and, for
+        the ``kondratiev_gorodetsky`` model, ``trn_R_m`` / ``trn_da_m`` /
+        ``trn_db_m`` [m].
+    enabled : bool or None, optional
+        Explicit channel switch. ``None`` (default) reproduces the historical
+        IMPLICIT gating exactly: the channel is live iff the thermodynamic
+        variance is non-zero, i.e. iff ``T_k > 0``.
+    ar1_stationary_init : bool, optional
+        Start the legacy AR(1) generator from its stationary distribution
+        instead of from ``x0 = 0``. Default ``False``, which is bit-identical
+        to the historical behaviour. Meaningful only for
+        ``trn_psd_model = 'single_pole'`` -- the colored models are stationary
+        from sample 0 already.
 
-    * ``single_pole`` (default): the historical AR(1) generator — the
-      sampled stream is BYTE-COMPATIBLE with the pre-colored-noise code.
-    * ``kondratiev_gorodetsky``: analytic WGM PSD, arXiv:2604.05897 Eq. 130,
-      variance renormalized to Eq. 129 (see simulator.colored_noise).
-    * ``csv``: measured/FEM tabulated PSD (Huang et al. 2019 style).
+    Attributes
+    ----------
+    c_pull : float
+        Frequency pull ``domega/dT`` [rad/(s K)].
+    var_delta_t : float
+        Thermodynamic temperature variance ``k_B*T**2/(rho*C*V)`` [K**2]
+        (arXiv:2604.05897v1 Eq. 129).
+    sigma_trn : float
+        Standard deviation of the detuning noise, ``c_pull*sqrt(var_delta_t)``
+        [rad/s].
+    delta_t_psd : callable
+        One-sided ``S_dT(f)`` [K**2/Hz] of the selected model.
+    var_delta_t_target : float
+        Variance [K**2] the selected model's spectrum integrates to over the
+        synthesis band.
+    f_s : float
+        Sample rate ``1/t_r`` [Hz].
+    enabled : bool
+        Resolved channel switch.
 
-    In every model the frequency-pull map is ``domega(t) = C_pull*dT(t)``
-    with ``C_pull = (omega0/n0)*(dn_dT + n0*alpha_L_per_k)`` — the optional
-    ``alpha_L_per_k`` (thermal-expansion coefficient, 1/K, default 0) folds
-    the paper's "dimensional fluctuation" companion of TRN into the pull
-    coefficient. Colored models synthesize HOST-SIDE (float64, numpy rng
-    derived deterministically from the JAX key); ``single_pole`` keeps the
-    traced AR(1) path.
+    Raises
+    ------
+    ValueError
+        If ``trn_psd_model`` is not one of ``single_pole``,
+        ``kondratiev_gorodetsky``, ``csv``; if ``enabled`` is not
+        boolean-valued; if the ``kondratiev_gorodetsky`` geometry keys are
+        missing or non-positive; or if ``trn_psd_model = 'csv'`` without a
+        usable ``trn_psd_csv_path`` / ``trn_csv_units``. The PSD is built
+        EAGERLY in ``__init__`` so a config error surfaces at construction
+        rather than at first sample.
+
+    Notes
+    -----
+    In every model the frequency-pull map is
+
+        domega(t) = C_pull * dT(t),
+        C_pull    = (omega0/n0) * (dn_dT + n0*alpha_L_per_k),
+
+    where the optional ``alpha_L_per_k`` folds the paper's "dimensional
+    fluctuation" companion of thermorefractive noise into the pull coefficient.
+    With ``alpha_L_per_k = 0`` this is bit-identical to the historical
+    ``(omega0/n0)*dn_dT`` (``x + n0*0.0 == x`` in IEEE arithmetic).
+
+    ``trn_psd_model`` selects the temperature-fluctuation spectrum:
+
+    * ``single_pole`` (default) -- the historical AR(1) generator; the sampled
+      stream is BYTE-COMPATIBLE with the pre-colored-noise code;
+    * ``kondratiev_gorodetsky`` -- analytic whispering-gallery PSD,
+      arXiv:2604.05897v1 Eq. 130, variance renormalized to Eq. 129 (see
+      :func:`simulator.colored_noise.kondratiev_gorodetsky_psd`);
+    * ``csv`` -- measured or FEM-tabulated PSD, Huang et al. (2019) style.
+
+    Examples
+    --------
+    >>> cfg = {"fsr_hz": 2.0e11, "T_k": 300.0, "pump_wavelength_m": 1.55e-6}
+    >>> trn = TRNoise(cfg)
+    >>> trn.enabled, trn.is_colored
+    (True, False)
+    >>> print(f"{trn.c_pull:.4e} rad/(s K)")
+    2.2096e+10 rad/(s K)
+    >>> print(f"{trn.var_delta_t:.4e} K^2")
+    3.8257e-10 K^2
+
+    ``T_k = 0`` is the repository's deterministic noise-off convention:
+
+    >>> TRNoise({**cfg, "T_k": 0.0}).enabled
+    False
     """
 
     def __init__(self, cfg, enabled: bool | None = None,
                  ar1_stationary_init: bool = False):
+        """Resolve the pull coefficient and build the temperature PSD eagerly.
+
+        See :class:`TRNoise` for the parameter table, the units of every config
+        key it reads, and the attributes this sets.
+
+        Raises
+        ------
+        ValueError
+            If ``enabled`` is not boolean-valued, or if the selected
+            ``trn_psd_model`` is unknown or its required keys are missing.
+
+        Notes
+        -----
+        The PSD is built here rather than lazily so that a configuration error
+        surfaces at construction time, where the traceback names the config,
+        instead of at the first sample deep inside a solve.
+        """
         self.cfg = cfg
         # Start the legacy AR(1) generator from its stationary distribution
         # instead of from x0 = 0. False (default) is bit-identical to the
@@ -325,6 +458,32 @@ class TRNoise:
 
     @property
     def is_colored(self) -> bool:
+        """Whether this instance uses the PSD engine rather than the AR(1) path.
+
+        Returns
+        -------
+        bool
+            ``True`` for ``trn_psd_model`` in
+            ``{'kondratiev_gorodetsky', 'csv'}`` -- the host-side float64 FFT
+            synthesis; ``False`` for ``'single_pole'``, the traced float32 AR(1)
+            recursion that is bit-identical to the pre-colored-noise code.
+
+        Notes
+        -----
+        This is the single predicate that decides both the sampler branch and
+        the output dtype, so it is a property rather than a stored flag: it
+        cannot drift from ``psd_model``.
+
+        Examples
+        --------
+        >>> cfg = {"fsr_hz": 2.0e11, "T_k": 300.0, "pump_wavelength_m": 1.55e-6}
+        >>> TRNoise(cfg).is_colored
+        False
+        >>> TRNoise({**cfg, "trn_psd_model": "kondratiev_gorodetsky",
+        ...          "trn_R_m": 1e-4, "trn_da_m": 2e-6,
+        ...          "trn_db_m": 1e-6}).is_colored
+        True
+        """
         return self.psd_model != "single_pole"
 
     @property
@@ -333,14 +492,45 @@ class TRNoise:
         return jnp.float64 if self.is_colored else jnp.float32
 
     def sample_delta_t(self, key, N) -> np.ndarray:
-        """Host-side float64 dT(t) sequence, (N,), from the selected PSD.
+        """Draw the underlying temperature-fluctuation sequence dT(t).
 
-        Available for EVERY model (single_pole uses its Lorentzian spectral
-        twin), stationary from sample 0 — this is the sequence the
-        segment-continuity path slices. NOT the byte-compatible AR(1) stream
-        (that one lives in :meth:`sample` for ``single_pole``).
+        Parameters
+        ----------
+        key : jax.Array
+            JAX PRNG key. Folded into a numpy generator by
+            :func:`simulator.colored_noise.np_generator_from_key`.
+        N : int
+            Number of round trips [samples], sampled at ``f_s = 1/t_r``.
 
-        Disabled: exact float64 zeros, no RNG draw.
+        Returns
+        -------
+        numpy.ndarray
+            Shape ``(N,)``, dtype ``float64``, units K. A disabled channel
+            returns exact zeros WITHOUT drawing from ``key``.
+
+        Raises
+        ------
+        ImportError
+            Propagated from :func:`~simulator.colored_noise.np_generator_from_key`
+            if JAX is unavailable.
+
+        Notes
+        -----
+        Available for EVERY model -- ``single_pole`` uses the Lorentzian
+        spectral twin of its AR(1) recursion -- and stationary from sample 0.
+        This is the sequence the segment-continuity path
+        (``legacy_segment_noise = 0``) slices, and it is NOT the
+        byte-compatible AR(1) stream; that one lives in :meth:`sample`.
+
+        Examples
+        --------
+        >>> import jax
+        >>> cfg = {"fsr_hz": 2.0e11, "T_k": 300.0, "pump_wavelength_m": 1.55e-6}
+        >>> dT = TRNoise(cfg).sample_delta_t(jax.random.PRNGKey(0), 1024)
+        >>> print(dT.shape, dT.dtype)
+        (1024,) float64
+        >>> TRNoise({**cfg, "T_k": 0.0}).sample_delta_t(jax.random.PRNGKey(0), 3)
+        array([0., 0., 0.])
         """
         if not self.enabled:
             return np.zeros(int(N), dtype=np.float64)
@@ -348,6 +538,43 @@ class TRNoise:
         return synthesize_from_psd(rng, int(N), self.delta_t_psd, self.f_s)
 
     def sample(self, key, N) -> jnp.ndarray:
+        """Draw the thermorefractive detuning-noise sequence domega(t).
+
+        Parameters
+        ----------
+        key : jax.Array
+            JAX PRNG key.
+        N : int
+            Number of round trips [samples].
+
+        Returns
+        -------
+        jax.Array
+            Shape ``(N,)``, units rad/s. dtype ``float32`` on the
+            ``single_pole`` AR(1) path (the historical stream) and ``float64``
+            on the colored paths. A disabled channel returns exact zeros
+            WITHOUT drawing from ``key``.
+
+        Raises
+        ------
+        ImportError
+            Propagated from the host-side generator on the colored paths.
+
+        Notes
+        -----
+        ``domega(t) = C_pull * dT(t)``. The ``single_pole`` branch runs the
+        traced AR(1) recursion, so it is vmap-safe and bit-identical to the
+        pre-colored-noise code; the colored branches synthesize on the HOST and
+        must be looped over trajectories rather than vmapped.
+
+        Examples
+        --------
+        >>> import jax
+        >>> cfg = {"fsr_hz": 2.0e11, "T_k": 300.0, "pump_wavelength_m": 1.55e-6}
+        >>> x = TRNoise(cfg).sample(jax.random.PRNGKey(0), 8)
+        >>> print(x.shape, x.dtype)
+        (8,) float32
+        """
         if not self.enabled:
             return _zeros(N, self._sample_dtype)
         if not self.is_colored:
@@ -357,7 +584,47 @@ class TRNoise:
                            dtype=jnp.float64)
 
     def psd(self, f) -> jnp.ndarray:
-        """One-sided S_domega(f) [(rad/s)^2/Hz] of the selected model."""
+        """Evaluate the closed-form one-sided detuning PSD.
+
+        Parameters
+        ----------
+        f : array_like
+            Frequency [Hz], scalar or array.
+
+        Returns
+        -------
+        jax.Array
+            ``S_domega(f)`` [(rad/s)**2/Hz], same shape as ``f``. A disabled
+            channel returns exact zeros.
+
+        Raises
+        ------
+        ValueError
+            Propagated from the CSV interpolator for a malformed table.
+
+        Notes
+        -----
+        This is the VALIDATION TARGET the sampled stream is checked against; it
+        is a closed form, not an estimate. On the ``single_pole`` path
+
+            S_domega(f) = C_pull**2 * 4*k_B*T**2*tau_th/(rho*C*V)
+                          / (1 + (2*pi*f*tau_th)**2),
+
+        the Lorentzian whose integral is the Eq. 129 thermodynamic variance
+        (arXiv:2604.05897v1). On the colored paths it is ``C_pull**2`` times the
+        selected ``S_dT(f)``.
+
+        Examples
+        --------
+        >>> cfg = {"fsr_hz": 2.0e11, "T_k": 300.0, "pump_wavelength_m": 1.55e-6}
+        >>> trn = TRNoise(cfg)
+        >>> print(f"{float(trn.psd(0.0)):.4e}")       # (rad/s)^2/Hz at DC
+        3.7355e+06
+        >>> bool(trn.psd(0.0) > trn.psd(1e6))         # Lorentzian roll-off
+        True
+        >>> float(TRNoise({**cfg, "T_k": 0.0}).psd(1e3))
+        0.0
+        """
         if not self.enabled:
             return _zeros_psd(f)
         if not self.is_colored:
@@ -373,7 +640,94 @@ class TRNoise:
 
 
 class PyroEONoise:
+    """Pyro-electric / electro-optic detuning noise, driven by the TRN temperature.
+
+    Parameters
+    ----------
+    cfg : dict
+        The ``physical_parameters`` mapping. Beyond the thermodynamic keys
+        :class:`TRNoise` reads, this channel uses ``eo_r33_m_per_v`` [m/V,
+        3.1e-11], ``pyroelectric_coeff_c_per_m2_k`` [C/(m**2 K), 9.6e-2],
+        ``eps_r_z`` [dimensionless, 28.0] and the thin-film stack geometry
+        ``t_ln_m`` [m, 4e-7], ``t_clad_top_m`` [m, 1e-6], ``t_clad_bot_m``
+        [m, 2e-6], ``eps_r_clad_top`` [dimensionless, 1.0], ``eps_r_clad_bot``
+        [dimensionless, 3.9].
+    enabled : bool or None, optional
+        Explicit channel switch. ``None`` (default) reproduces the legacy rule,
+        which is the SAME as :class:`TRNoise`: live iff ``T_k > 0``.
+
+    Attributes
+    ----------
+    eps_r_eff : float
+        Effective relative permittivity [dimensionless] after the 1-D
+        dielectric-boundary screening of the thin-film stack.
+    pyro_coeff : float
+        Frequency pull ``domega/dT`` [rad/(s K)] of this channel.
+    sigma_pyroeo : float
+        Standard deviation of the resulting detuning noise [rad/s].
+    delta_t_psd : callable
+        The SAME temperature spectrum family :class:`TRNoise` uses, selected by
+        ``trn_psd_model``.
+    enabled : bool
+        Resolved channel switch.
+
+    Raises
+    ------
+    ValueError
+        If ``enabled`` is not boolean-valued, or from the shared PSD builder for
+        a malformed ``trn_psd_model`` configuration.
+
+    Notes
+    -----
+    A temperature fluctuation releases pyro-electric surface charge, whose field
+    shifts the resonance through the electro-optic coefficient:
+
+        domega(t) = [omega0 * n0**2 * r33 * p / (2*eps0*eps_r_eff)] * dT(t).
+
+    The screening factor ``eps_r_eff`` is a 1-D approximation of the dielectric
+    boundary conditions in the thin-film stack: the field extending into the
+    claddings dilutes ``eps_r_z``, so ``eps_r_eff = eps_r_z +
+    eps_r_top*(t_top/t_ln) + eps_r_bot*(t_bot/t_ln)``.
+
+    This channel is driven by the SAME dT(t) realization as :class:`TRNoise` --
+    they are one thermodynamic fluctuation seen through two pull coefficients,
+    which is why :class:`TotalNoise` adds them coherently (and, for z-cut TFLN
+    with an air top cladding, with opposite sign) rather than in quadrature.
+
+    A zero pyro or electro-optic coefficient -- ``r33 = 0`` on centrosymmetric
+    SiN -- independently makes every sample exactly 0.0. That is a MATERIAL
+    fact, not a switch, so it is deliberately not folded into ``enabled``.
+
+    Examples
+    --------
+    >>> cfg = {"fsr_hz": 2.0e11, "T_k": 300.0, "pump_wavelength_m": 1.55e-6}
+    >>> pyro = PyroEONoise(cfg)
+    >>> print(f"{pyro.eps_r_eff:.1f}")           # 28 + 1.0*2.5 + 3.9*5.0
+    50.0
+    >>> print(f"{pyro.pyro_coeff:.4e} rad/(s K)")
+    1.9770e+13 rad/(s K)
+    >>> PyroEONoise({**cfg, "T_k": 0.0}).enabled
+    False
+    """
+
     def __init__(self, cfg, enabled: bool | None = None):
+        """Resolve the electro-optic pull coefficient and the stack screening.
+
+        See :class:`PyroEONoise` for the parameter table, the units of every
+        config key it reads, and the attributes this sets.
+
+        Raises
+        ------
+        ValueError
+            If ``enabled`` is not boolean-valued, or from the shared PSD
+            builder for a malformed ``trn_psd_model`` configuration.
+
+        Notes
+        -----
+        Reads the SAME ``trn_psd_model`` selection as :class:`TRNoise`, because
+        the channel is driven by the same temperature fluctuation and must not
+        be able to disagree with it about that fluctuation's spectrum.
+        """
         self.cfg = cfg
         self.t_r = 1.0 / float(cfg.get("fsr_hz", 2.0e11))
         self.omega_0 = 2.0 * math.pi * 299_792_458.0 / float(cfg.get("pump_wavelength_m", 1.55e-6))
@@ -432,6 +786,20 @@ class PyroEONoise:
 
     @property
     def is_colored(self) -> bool:
+        """Whether this instance uses the PSD engine rather than the AR(1) path.
+
+        Returns
+        -------
+        bool
+            ``True`` unless ``trn_psd_model`` is ``'single_pole'``. The channel
+            inherits the TRN spectrum selection because it is driven by the same
+            temperature fluctuation.
+
+        Examples
+        --------
+        >>> PyroEONoise({"fsr_hz": 2.0e11, "T_k": 300.0}).is_colored
+        False
+        """
         return self.psd_model != "single_pole"
 
     @property
@@ -440,6 +808,43 @@ class PyroEONoise:
         return jnp.float64 if self.is_colored else jnp.float32
 
     def sample(self, key, N) -> jnp.ndarray:
+        """Draw the pyro-electric/electro-optic detuning-noise sequence.
+
+        Parameters
+        ----------
+        key : jax.Array
+            JAX PRNG key.
+        N : int
+            Number of round trips [samples].
+
+        Returns
+        -------
+        jax.Array
+            Shape ``(N,)``, units rad/s; ``float32`` on the ``single_pole``
+            path and ``float64`` on the colored paths. A disabled channel
+            returns exact zeros WITHOUT drawing from ``key``.
+
+        Raises
+        ------
+        ImportError
+            Propagated from the host-side generator on the colored paths.
+
+        Notes
+        -----
+        Sampling this class STANDALONE draws an independent temperature
+        realization, which is correct only for a per-channel PSD check. In a
+        solve, the physically correct coupling -- one shared dT(t) behind both
+        pull coefficients -- is provided by
+        :meth:`TotalNoise.sample_with_delta_t`.
+
+        Examples
+        --------
+        >>> import jax
+        >>> x = PyroEONoise({"fsr_hz": 2.0e11, "T_k": 300.0}).sample(
+        ...     jax.random.PRNGKey(0), 8)
+        >>> print(x.shape, x.dtype)
+        (8,) float32
+        """
         if not self.enabled:
             return _zeros(N, self._sample_dtype)
         if not self.is_colored:
@@ -449,6 +854,38 @@ class PyroEONoise:
         return jnp.asarray(self.pyro_coeff * delta_t, dtype=jnp.float64)
 
     def psd(self, f) -> jnp.ndarray:
+        """Evaluate the closed-form one-sided pyro-electric/EO detuning PSD.
+
+        Parameters
+        ----------
+        f : array_like
+            Frequency [Hz], scalar or array.
+
+        Returns
+        -------
+        jax.Array
+            ``S_domega(f)`` [(rad/s)**2/Hz], same shape as ``f``; exact zeros
+            when the channel is disabled.
+
+        Raises
+        ------
+        ValueError
+            Propagated from the CSV interpolator for a malformed table.
+
+        Notes
+        -----
+        ``pyro_coeff**2`` times the same ``S_dT(f)`` [K**2/Hz] that
+        :meth:`TRNoise.psd` scales by ``c_pull**2`` -- the two channels differ
+        only in their pull coefficient.
+
+        Examples
+        --------
+        >>> pyro = PyroEONoise({"fsr_hz": 2.0e11, "T_k": 300.0})
+        >>> bool(pyro.psd(0.0) > pyro.psd(1e6))
+        True
+        >>> float(PyroEONoise({"T_k": 0.0}).psd(1e3))
+        0.0
+        """
         if not self.enabled:
             return _zeros_psd(f)
         if not self.is_colored:
@@ -462,7 +899,104 @@ class PyroEONoise:
 
 
 class TCCRNoise:
+    """Thermal-carrier / surface-state detuning noise (independent stream).
+
+    Parameters
+    ----------
+    cfg : dict
+        The ``physical_parameters`` mapping. Keys read (with units and
+        defaults): ``fsr_hz`` [Hz, 2e11], ``pump_wavelength_m`` [m, 1.55e-6],
+        ``tau_carrier_s`` [s, 1e-7], ``T_k`` [K, 300],
+        ``surface_state_density_per_m2`` [1/m**2, 1e16], ``eo_r33_m_per_v``
+        [m/V, 3.1e-11], ``n0`` [dimensionless, 2.2], ``eps_r_z``
+        [dimensionless, 28.0], ``effective_mode_area_m2`` [m**2, 1e-12],
+        ``t_ln_m`` [m, 4e-7] and ``intrinsic_q`` [dimensionless, 2e6].
+    enabled : bool or None, optional
+        Explicit channel switch. ``None`` (default) reproduces the legacy rule:
+        live iff ``sigma_tccr > 0``, i.e. iff the electro-optic coefficient is
+        non-zero.
+
+    Attributes
+    ----------
+    s0_tccr : float
+        Zero-frequency PSD ``S_domega(0)`` [(rad/s)**2/Hz].
+    var_tccr : float
+        Stationary variance ``s0_tccr/(2*tau_carrier)`` [(rad/s)**2].
+    sigma_tccr : float
+        Standard deviation [rad/s].
+    enabled : bool
+        Resolved channel switch.
+
+    Raises
+    ------
+    ValueError
+        If ``enabled`` is not boolean-valued.
+
+    Warns
+    -----
+    UserWarning
+        If ``sigma_tccr`` is non-zero but outside the physically plausible
+        ``[1e4, 1e11]`` rad/s window for a chi(2) platform, or if it exceeds the
+        cavity linewidth estimate ``kappa ~ 2*omega0/Q_i`` -- in which case the
+        channel is non-perturbative and would destabilize every soliton, so the
+        configuration should be calibrated against a measured noise floor before
+        it is used to generate data.
+
+    Notes
+    -----
+    Surface-state carriers fluctuate by shot noise about their equilibrium
+    number ``N_s_eq = n_s*A_eff``; each carrier contributes a field
+    ``E = e/(eps0*eps_r_eff*A_eff)`` [V/m], which the electro-optic effect turns
+    into a resonance shift
+
+        domega/dN_s = -omega0 * n0**2 * r33 * E_per_carrier / 2   [rad/s].
+
+    The film thickness ``t_ln`` deliberately does NOT enter that expression --
+    ``E_per_carrier`` is already a field. With an exponential carrier
+    autocorrelation of time ``tau_carrier`` the spectrum is the Lorentzian
+
+        S_domega(f) = s0 / (1 + (2*pi*f*tau_carrier)**2),
+        s0 = (domega/dN_s)**2 * N_s_eq * 2*tau_carrier.
+
+    This channel is NOT gated by ``T_k`` -- its variance carries no ``T_k``
+    factor -- which is exactly why the ``T_k = 0`` "noise-off" convention never
+    silenced it on chi(2) platforms, and why the explicit switch exists.
+
+    Examples
+    --------
+    A centrosymmetric platform (SiN, ``r33 = 0``) has no such channel at all:
+
+    >>> cfg = {"fsr_hz": 2.0e11, "T_k": 300.0, "pump_wavelength_m": 1.55e-6}
+    >>> sin = TCCRNoise({**cfg, "eo_r33_m_per_v": 0.0})
+    >>> sin.sigma_tccr, sin.enabled
+    (0.0, False)
+
+    A chi(2) platform does:
+
+    >>> tccr = TCCRNoise({**cfg, "surface_state_density_per_m2": 1e14})
+    >>> print(f"{tccr.sigma_tccr:.4e} rad/s")
+    5.8918e+08 rad/s
+    """
+
     def __init__(self, cfg, enabled: bool | None = None):
+        """Derive the per-carrier frequency shift and the resulting Lorentzian.
+
+        See :class:`TCCRNoise` for the parameter table, the units of every
+        config key it reads, and the attributes this sets.
+
+        Raises
+        ------
+        ValueError
+            If ``enabled`` is not boolean-valued.
+
+        Warns
+        -----
+        UserWarning
+            If the resulting ``sigma_tccr`` is non-zero but implausible, or
+            exceeds the cavity linewidth. Both checks run HERE, at
+            construction, so a mis-set surface-state density is caught before a
+            campaign runs rather than after it.
+        """
         self.t_r         = 1.0 / float(cfg.get("fsr_hz", 2.0e11))
         self.omega_0     = 2.0 * math.pi * 299_792_458.0 / float(cfg.get("pump_wavelength_m", 1.55e-6))
         self.tau_carrier = float(cfg.get("tau_carrier_s", 1.0e-7))
@@ -528,35 +1062,156 @@ class TCCRNoise:
         )
 
     def sample(self, key, N) -> jnp.ndarray:
+        """Draw the thermal-carrier detuning-noise sequence.
+
+        Parameters
+        ----------
+        key : jax.Array
+            JAX PRNG key. This channel's stream is INDEPENDENT of the shared
+            thermal stream, so in :class:`TotalNoise` it is fed the second
+            subkey of an unconditional split.
+        N : int
+            Number of round trips [samples].
+
+        Returns
+        -------
+        jax.Array
+            Shape ``(N,)``, dtype ``float32``, units rad/s. A disabled channel
+            returns exact zeros WITHOUT drawing from ``key``.
+
+        Notes
+        -----
+        Always the traced AR(1) recursion with correlation time
+        ``tau_carrier``: unlike the thermal channels, this one has no
+        pluggable-PSD variant, because its spectrum is a genuine Lorentzian
+        rather than an asymptotic fit.
+
+        Examples
+        --------
+        >>> import jax
+        >>> cfg = {"fsr_hz": 2.0e11, "surface_state_density_per_m2": 1e14}
+        >>> x = TCCRNoise(cfg).sample(jax.random.PRNGKey(0), 8)
+        >>> print(x.shape, x.dtype)
+        (8,) float32
+        """
         if not self.enabled:
             return _zeros(N, jnp.float32)
         return _ar1_samples(key, N, self.tau_carrier, self.sigma_tccr, self.t_r)
 
     def psd(self, f) -> jnp.ndarray:
+        """Evaluate the closed-form one-sided thermal-carrier detuning PSD.
+
+        Parameters
+        ----------
+        f : array_like
+            Frequency [Hz], scalar or array.
+
+        Returns
+        -------
+        jax.Array
+            ``S_domega(f) = s0/(1 + (2*pi*f*tau_carrier)**2)``
+            [(rad/s)**2/Hz], same shape as ``f``; exact zeros when disabled.
+
+        Notes
+        -----
+        The corner sits at ``1/(2*pi*tau_carrier)`` [Hz] -- with the default
+        ``tau_carrier = 100 ns`` that is ~1.6 MHz, three decades above the
+        thermorefractive corner, which is what makes the two channels separable
+        in a measured spectrum.
+
+        Examples
+        --------
+        >>> cfg = {"fsr_hz": 2.0e11, "surface_state_density_per_m2": 1e14}
+        >>> tccr = TCCRNoise(cfg)
+        >>> print(f"{float(tccr.psd(0.0)):.4e}")
+        6.9427e+10
+        >>> bool(tccr.psd(0.0) > tccr.psd(1e9))
+        True
+        """
         if not self.enabled:
             return _zeros_psd(f)
         return self.s0_tccr / (1.0 + (2.0 * jnp.pi * f * self.tau_carrier) ** 2)
 
 
 class TotalNoise:
-    """Combined TRN + Pyro-EO + TCCR detuning noise.
+    """Combined TRN + Pyro-EO + TCCR detuning noise with correct correlations.
 
-    The TRN and Pyro-EO channels share ONE temperature sequence dT(t) — they
-    are the same thermodynamic fluctuation seen through two different pull
-    coefficients — whatever ``trn_psd_model`` generates that sequence. TCCR
-    (carrier noise, zero for SiN) keeps its independent AR(1) stream.
+    Parameters
+    ----------
+    cfg : dict
+        The ``physical_parameters`` mapping, passed through to each
+        sub-channel; see :class:`TRNoise`, :class:`PyroEONoise` and
+        :class:`TCCRNoise` for the keys and units each one reads.
+    noise_config : NoiseConfig or None, optional
+        Optional :class:`simulator.noise_config.NoiseConfig`. ``None`` (the
+        default) leaves every sub-channel to resolve its own switch from the
+        legacy rule, so behaviour is EXACTLY as before this parameter existed.
+        When supplied, each sub-channel's ``enabled`` comes from the matching
+        field (``trn``, ``pyro_eo``, ``tccr``) and ``trn_ar1_stationary_init``
+        selects the start-up policy of the shared thermal AR(1) stream.
 
-    Sampling surfaces:
-      * :meth:`sample` — the historical (N,) float32 combined sequence;
-        BYTE-COMPATIBLE with the pre-colored-noise code for
-        ``trn_psd_model = single_pole``.
-      * :meth:`sample_with_delta_t` — same combined sequence PLUS the
-        underlying dT(t) (float64), so the FSR-noise channel
-        dD1(t) = (D1/omega0)*C_pull*dT(t) can reuse the identical sequence.
-      * :meth:`sample_full_with_delta_t` — host-side float64 PSD-synthesized
-        path for ALL models (single_pole uses its Lorentzian spectral twin);
-        stationary from sample 0, used by the ``legacy_segment_noise = 0``
-        full-trajectory-then-slice mode of the dataset generator.
+    Attributes
+    ----------
+    trn, pyroeo, tccr : TRNoise, PyroEONoise, TCCRNoise
+        The sub-channels.
+    c_pull : float
+        Thermorefractive frequency pull [rad/(s K)].
+    pyro_coeff : float
+        Pyro-electric/EO frequency pull [rad/(s K)].
+    delta_t_psd : callable
+        The shared temperature spectrum ``S_dT(f)`` [K**2/Hz].
+    f_s : float
+        Sample rate ``1/t_r`` [Hz].
+
+    Raises
+    ------
+    ValueError
+        Propagated from any sub-channel's construction.
+
+    Warns
+    -----
+    UserWarning
+        If ``noise_config.fsr`` is on while ``noise_config.trn`` is off: the FSR
+        channel is driven by the same dT(t) realization, so that combination
+        produces identically zero FSR noise rather than the intended channel.
+
+    Notes
+    -----
+    The thermorefractive and pyro-electric/EO channels share ONE temperature
+    sequence dT(t) [K] -- they are the same thermodynamic fluctuation seen
+    through two different pull coefficients -- whatever ``trn_psd_model``
+    generates that sequence. Adding two independent draws instead would get the
+    total variance wrong, because for z-cut TFLN with an air top cladding the
+    pyro-electric pull PARTIALLY CANCELS the thermorefractive one:
+
+        domega(t) = (C_pull - pyro_coeff) * dT(t) + domega_TCCR(t).
+
+    The thermal-carrier channel (zero for SiN) keeps its own independent AR(1)
+    stream, fed by the second subkey of an unconditional two-way split.
+
+    Three sampling surfaces, deliberately kept distinct:
+
+    * :meth:`sample` -- the historical ``(N,)`` float32 combined sequence,
+      BYTE-COMPATIBLE with the pre-colored-noise code for
+      ``trn_psd_model = 'single_pole'``;
+    * :meth:`sample_with_delta_t` -- the same combined sequence PLUS the
+      underlying dT(t), so the FSR-noise channel
+      ``dD1(t) = (D1/omega0)*C_pull*dT(t)`` can reuse the identical realization;
+    * :meth:`sample_full_with_delta_t` -- the host-side float64 PSD-synthesized
+      path for ALL models, stationary from sample 0, used by the
+      ``legacy_segment_noise = 0`` full-trajectory-then-slice mode.
+
+    Examples
+    --------
+    >>> import jax
+    >>> cfg = {"fsr_hz": 2.0e11, "T_k": 300.0, "pump_wavelength_m": 1.55e-6,
+    ...        "eo_r33_m_per_v": 0.0}
+    >>> total = TotalNoise(cfg)
+    >>> x = total.sample(jax.random.PRNGKey(0), 8)
+    >>> print(x.shape, x.dtype)
+    (8,) float32
+    >>> total.tccr.enabled                       # r33 = 0 -> no carrier channel
+    False
     """
 
     def __init__(self, cfg, noise_config=None):
@@ -620,17 +1275,77 @@ class TotalNoise:
 
     @property
     def is_colored(self) -> bool:
+        """Whether the shared thermal stream comes from the PSD engine.
+
+        Returns
+        -------
+        bool
+            ``True`` unless ``trn_psd_model`` is ``'single_pole'``. Mirrors
+            :attr:`TRNoise.is_colored`, from which it is derived.
+
+        Examples
+        --------
+        >>> TotalNoise({"fsr_hz": 2.0e11, "T_k": 300.0,
+        ...             "surface_state_density_per_m2": 1e14}).is_colored
+        False
+        """
         return self.psd_model != "single_pole"
 
     def sample_with_delta_t(self, key, N):
-        """(combined detuning noise, dT sequence): shapes (N,), (N,).
+        """Draw the combined detuning noise together with the temperature that drove it.
 
-        The combined sequence is float32 and — for ``single_pole`` —
-        bit-identical to the historical :meth:`sample` (identical key split,
-        identical arithmetic; dT is merely also returned). dT is float64
-        (colored) / the float32 AR(1) stream upcast (legacy). The legacy
-        branch is fully traceable (vmap-safe); colored models synthesize on
-        the HOST and must be looped, not vmapped.
+        Parameters
+        ----------
+        key : jax.Array
+            JAX PRNG key, split UNCONDITIONALLY into ``(key_thermal,
+            key_tccr)``.
+        N : int
+            Number of round trips [samples].
+
+        Returns
+        -------
+        combined : jax.Array
+            Shape ``(N,)``, dtype ``float32``, units rad/s: the total detuning
+            noise ``(C_pull - pyro_coeff)*dT(t) + domega_TCCR(t)``, with each
+            coefficient zeroed if its channel is disabled.
+        delta_t : jax.Array
+            Shape ``(N,)``, units K: the shared temperature realization.
+            ``float64`` on the colored path, and on the legacy path the float32
+            AR(1) stream upcast to float64 whenever ``jax_enable_x64`` is on.
+
+        Raises
+        ------
+        ImportError
+            Propagated from the host-side generator on the colored paths.
+
+        Notes
+        -----
+        The two-way split at the top of this method is load-bearing and must
+        stay UNCONDITIONAL: it happens regardless of which channels are enabled,
+        so toggling one channel can never shift another channel's random stream.
+        Never move it inside a branch, never change its arity, and never reorder
+        the subkeys.
+
+        For ``single_pole`` the combined sequence is bit-identical to
+        :meth:`sample` -- identical key split, identical arithmetic; dT is
+        merely also returned. The legacy branch is fully traceable and
+        vmap-safe; the colored models synthesize on the HOST and must be looped
+        over trajectories.
+
+        Returning dT alongside the detuning noise is what lets the FSR channel
+        use the SAME realization, as it physically must: the repetition-rate
+        fluctuation and the resonance shift are two consequences of one
+        temperature excursion.
+
+        Examples
+        --------
+        >>> import jax
+        >>> cfg = {"fsr_hz": 2.0e11, "T_k": 300.0, "pump_wavelength_m": 1.55e-6,
+        ...        "surface_state_density_per_m2": 1e14}
+        >>> combined, dT = TotalNoise(cfg).sample_with_delta_t(
+        ...     jax.random.PRNGKey(0), 16)
+        >>> print(combined.shape, combined.dtype, dT.shape)
+        (16,) float32 (16,)
         """
         # CRITICAL: this split is UNCONDITIONAL. It must happen regardless of which
         # channels are enabled, so that enabling or disabling one channel never
@@ -675,17 +1390,90 @@ class TotalNoise:
         return combined, temp_noise
 
     def sample(self, key, N) -> jnp.ndarray:
+        """Draw the combined detuning-noise sequence.
+
+        Parameters
+        ----------
+        key : jax.Array
+            JAX PRNG key.
+        N : int
+            Number of round trips [samples].
+
+        Returns
+        -------
+        jax.Array
+            Shape ``(N,)``, dtype ``float32``, units rad/s. For
+            ``trn_psd_model = 'single_pole'`` this stream is BYTE-COMPATIBLE
+            with the pre-colored-noise code.
+
+        Raises
+        ------
+        ImportError
+            Propagated from the host-side generator on the colored paths.
+
+        Notes
+        -----
+        A thin projection of :meth:`sample_with_delta_t`, kept so that callers
+        that do not need the temperature realization are not tempted to build
+        their own combination and get the TRN/Pyro-EO correlation wrong.
+
+        Examples
+        --------
+        >>> import jax
+        >>> cfg = {"fsr_hz": 2.0e11, "T_k": 300.0, "pump_wavelength_m": 1.55e-6,
+        ...        "surface_state_density_per_m2": 1e14}
+        >>> total = TotalNoise(cfg)
+        >>> key = jax.random.PRNGKey(0)
+        >>> bool((total.sample(key, 8) == total.sample_with_delta_t(key, 8)[0]).all())
+        True
+        """
         return self.sample_with_delta_t(key, N)[0]
 
     def sample_full_with_delta_t(self, key, N):
-        """Host float64 (combined, dT) pair for the segment-continuity path.
+        """Draw the host-side float64 (combined, dT) pair for the segment-continuity path.
 
-        EVERY model synthesizes from its PSD here (single_pole from the
-        Lorentzian twin of the AR(1)), so the sequence is stationary from
-        sample 0 — a full trajectory generated once up front and sliced per
-        segment has no boundary decorrelation transient. TCCR also
-        synthesizes from its single-pole PSD (independent stream from the
-        second subkey). Returns numpy float64 arrays, shape (N,) each.
+        Parameters
+        ----------
+        key : jax.Array
+            JAX PRNG key, split UNCONDITIONALLY into ``(key_thermal,
+            key_tccr)`` exactly as in :meth:`sample_with_delta_t`.
+        N : int
+            Length of the FULL trajectory [samples], not of one segment.
+
+        Returns
+        -------
+        combined : numpy.ndarray
+            Shape ``(N,)``, dtype ``float64``, units rad/s.
+        delta_t : numpy.ndarray
+            Shape ``(N,)``, dtype ``float64``, units K.
+
+        Raises
+        ------
+        ImportError
+            Propagated from :func:`~simulator.colored_noise.np_generator_from_key`.
+
+        Notes
+        -----
+        EVERY model synthesizes from its PSD here -- ``single_pole`` from the
+        Lorentzian twin of its AR(1) recursion -- so the sequence is stationary
+        from sample 0. A full trajectory generated once up front and then sliced
+        per segment therefore has no boundary decorrelation transient, which is
+        the whole point of the ``legacy_segment_noise = 0`` mode: with the
+        legacy per-segment regeneration, every segment boundary restarts the
+        AR(1) burn-in and injects a spurious transient into the statistics.
+
+        The thermal-carrier channel also synthesizes from its single-pole PSD
+        here, on an independent stream from the second subkey.
+
+        Examples
+        --------
+        >>> import jax
+        >>> cfg = {"fsr_hz": 2.0e11, "T_k": 300.0, "pump_wavelength_m": 1.55e-6,
+        ...        "surface_state_density_per_m2": 1e14}
+        >>> combined, dT = TotalNoise(cfg).sample_full_with_delta_t(
+        ...     jax.random.PRNGKey(0), 64)
+        >>> print(combined.shape, combined.dtype, dT.dtype)
+        (64,) float64 float64
         """
         # CRITICAL: unconditional split — see sample_with_delta_t. Toggling a channel
         # must never shift another channel's stream.
@@ -768,9 +1556,106 @@ class PumpNoise:
     ranges are validated only when enabled. Representative values —
     ECDL: h₀ ≈ 3e3 Hz²/Hz (Δν_L ≈ 10 kHz), h₋₁ ≈ 1e10 Hz³/Hz;
     fiber laser: h₀ ≈ 30 Hz²/Hz (Δν_L ≈ 100 Hz).
+
+    Parameters
+    ----------
+    cfg : dict
+        The ``physical_parameters`` mapping. Keys read (with units and
+        defaults): ``fsr_hz`` [Hz, 2e11], ``pump_noise_enabled``
+        [0/1, 0], ``pump_freq_noise_h0_hz2_per_hz`` [Hz**2/Hz, 0.0],
+        ``pump_freq_noise_hm1_hz3_per_hz`` [Hz**3/Hz, 0.0],
+        ``pump_rin_floor_dbc_per_hz`` [dBc/Hz, -300],
+        ``pump_rin_excess_dbc_per_hz`` [dBc/Hz, -300] and
+        ``pump_rin_corner_hz`` [Hz, 1e4].
+    enabled : bool or None, optional
+        Explicit master switch for BOTH channels. ``None`` (default) reads
+        ``pump_noise_enabled`` from ``cfg``.
+
+    Attributes
+    ----------
+    t_r : float
+        Round-trip time [s].
+    f_s : float
+        Sample rate ``1/t_r`` [Hz].
+    lorentzian_linewidth_hz : float
+        Intrinsic linewidth ``pi*h0`` [Hz] implied by the white plateau; 0 when
+        the channel is disabled.
+    enabled : bool
+        Resolved master switch.
+
+    Raises
+    ------
+    ValueError
+        If ``pump_noise_enabled`` is not boolean-valued; or, when enabled, if
+        either frequency-noise coefficient is negative, if
+        ``pump_rin_corner_hz <= 0``, or if either RIN level exceeds
+        -80 dBc/Hz -- a value that large is almost certainly a LINEAR spectral
+        density entered where a dB quantity is expected, since physical lasers
+        sit below -80 dBc/Hz.
+
+    Notes
+    -----
+    Disabling the channel does not merely skip the samplers: the effective
+    coefficients are multiplied by zero at construction, so the PSD accessors
+    return exact zeros too and ``lorentzian_linewidth_hz`` reports 0 Hz. That
+    keeps "what spectrum did this run have?" answerable from the same object
+    whether or not the channel was on.
+
+    Both channels are sampled once per round trip and synthesized HOST-SIDE in
+    float64, so they are deterministic per JAX key and independent of the
+    ``jax_enable_x64`` flag. The solver threads them into machinery it already
+    has -- the frequency channel is summed into the detuning sequence and the
+    RIN channel scales the pump kick -- so the cavity transfer function and the
+    thermal transduction of RIN emerge from the equations of motion rather than
+    being hand-implemented.
+
+    Examples
+    --------
+    >>> cfg = {"fsr_hz": 2.0e11, "pump_noise_enabled": 1,
+    ...        "pump_freq_noise_h0_hz2_per_hz": 3e3,
+    ...        "pump_freq_noise_hm1_hz3_per_hz": 1e10,
+    ...        "pump_rin_floor_dbc_per_hz": -160.0,
+    ...        "pump_rin_excess_dbc_per_hz": -140.0}
+    >>> pump = PumpNoise(cfg)
+    >>> print(f"{pump.lorentzian_linewidth_hz:.4e} Hz")   # pi*h0
+    9.4248e+03 Hz
+
+    Disabled is inert, whatever the numbers say:
+
+    >>> off = PumpNoise({**cfg, "pump_noise_enabled": 0})
+    >>> off.enabled, off.lorentzian_linewidth_hz, float(off.psd_freq(1e6))
+    (False, 0.0, 0.0)
+
+    A linear density entered where dBc/Hz belongs is rejected:
+
+    >>> PumpNoise({**cfg, "pump_rin_floor_dbc_per_hz": 1e-16})
+    Traceback (most recent call last):
+        ...
+    ValueError: pump_rin_floor_dbc_per_hz = 1e-16 exceeds -80 dBc/Hz...
     """
 
     def __init__(self, cfg, enabled: bool | None = None):
+        """Validate the laser-noise coefficients and pre-scale them by the switch.
+
+        See :class:`PumpNoise` for the parameter table, the units of every
+        config key it reads, and the attributes this sets.
+
+        Raises
+        ------
+        ValueError
+            If ``pump_noise_enabled`` is not boolean-valued or, when enabled,
+            if a frequency-noise coefficient is negative, the RIN corner is
+            non-positive, or a RIN level exceeds -80 dBc/Hz.
+
+        Notes
+        -----
+        The effective coefficients are multiplied by the switch here, so a
+        disabled channel yields exact zeros from the PSD accessors as well as
+        from the samplers -- "what spectrum did this run have?" stays
+        answerable either way. The value RANGES are validated only when the
+        channel is enabled, so a config carrying placeholder numbers for an
+        unused channel is not rejected.
+        """
         self.cfg = cfg
         self.t_r = 1.0 / float(cfg.get("fsr_hz", 2.0e11))
         self.f_s = 1.0 / self.t_r
@@ -823,12 +1708,73 @@ class PumpNoise:
 
     # -- closed-form one-sided PSDs (validation targets) ---------------------
     def psd_freq(self, f) -> np.ndarray:
-        """One-sided S_δν(f) [Hz²/Hz] of the laser-frequency deviation δν_p."""
+        """Evaluate the one-sided frequency-noise PSD of the laser.
+
+        Parameters
+        ----------
+        f : array_like
+            Frequency [Hz], scalar or array.
+
+        Returns
+        -------
+        numpy.ndarray
+            ``S_dnu(f) = h0 + h_-1/f`` [Hz**2/Hz], same shape as ``f``. Exact
+            zeros when the channel is disabled.
+
+        Notes
+        -----
+        The closed-form validation target for :meth:`sample_freq`, per
+        arXiv:2604.05897v1 Sec. V.B.4. The white plateau ``h0`` carries the
+        intrinsic Lorentzian linewidth through ``dnu_L = pi*h0``; ``h_-1`` is
+        the flicker coefficient [Hz**3/Hz]. The ``f = 0`` bin is guarded by
+        clamping the divisor at the smallest positive float rather than by
+        special-casing, so the callable stays vectorized.
+
+        Examples
+        --------
+        >>> pump = PumpNoise({"fsr_hz": 2.0e11, "pump_noise_enabled": 1,
+        ...                   "pump_freq_noise_h0_hz2_per_hz": 3e3,
+        ...                   "pump_freq_noise_hm1_hz3_per_hz": 1e10})
+        >>> print(f"{float(pump.psd_freq(1e6)):.4e}")    # h0 + h_-1/f
+        1.3000e+04
+        >>> bool(pump.psd_freq(1e3) > pump.psd_freq(1e6))
+        True
+        """
         f = np.asarray(f, dtype=np.float64)
         return self._h0 + self._hm1 / np.maximum(f, np.finfo(np.float64).tiny)
 
     def psd_rin(self, f) -> np.ndarray:
-        """One-sided S_ε(f) [1/Hz] of the relative intensity fluctuation ε."""
+        """Evaluate the one-sided relative-intensity-noise PSD.
+
+        Parameters
+        ----------
+        f : array_like
+            Frequency [Hz], scalar or array.
+
+        Returns
+        -------
+        numpy.ndarray
+            ``S_eps(f)`` [1/Hz], same shape as ``f``: a flat floor
+            ``10**(floor_dBc/10)`` plus, below the corner ``f_c``, an excess
+            ``10**(excess_dBc/10)*(f_c/f)``. Exact zeros when disabled.
+
+        Notes
+        -----
+        The closed-form validation target for :meth:`sample_rin`, per
+        arXiv:2604.05897v1 Sec. V.B.5. ``eps`` is dimensionless:
+        ``P_in(t) = Pbar_in*(1 + eps(t))``.
+
+        Examples
+        --------
+        >>> pump = PumpNoise({"fsr_hz": 2.0e11, "pump_noise_enabled": 1,
+        ...                   "pump_rin_floor_dbc_per_hz": -160.0,
+        ...                   "pump_rin_excess_dbc_per_hz": -140.0,
+        ...                   "pump_rin_corner_hz": 1e4})
+        >>> print(f"{float(pump.psd_rin(1e6)):.4e}")   # above the corner: floor
+        1.0000e-16
+        >>> print(f"{float(pump.psd_rin(1e3)):.4e}")   # below it: 1/f excess
+        1.0010e-13
+        """
         f = np.asarray(f, dtype=np.float64)
         excess = np.where(
             f < self.rin_corner_hz,
@@ -841,10 +1787,50 @@ class PumpNoise:
 
     # -- samplers ------------------------------------------------------------
     def sample_freq(self, key, N: int) -> np.ndarray:
-        """2π·δν_p(t) [rad/s], shape (N,), float64, one sample per round trip.
+        """Draw the pump-laser frequency-noise sequence.
 
-        The caller (solver) applies the sign: δω-noise contribution is
-        −2π·δν_p because δω ≡ ω_res − ω_p.
+        Parameters
+        ----------
+        key : jax.Array
+            JAX PRNG key.
+        N : int
+            Number of round trips [samples], sampled at ``f_s = 1/t_r``.
+
+        Returns
+        -------
+        numpy.ndarray
+            Shape ``(N,)``, dtype ``float64``, units rad/s: ``2*pi*dnu_p(t)``.
+            Exact zeros when the channel is disabled or both coefficients are
+            zero.
+
+        Raises
+        ------
+        ImportError
+            Propagated from the host-side generator.
+
+        Notes
+        -----
+        SIGN CONVENTION: this returns ``+2*pi*dnu_p``. The caller applies the
+        sign -- the contribution to the detuning is ``-2*pi*dnu_p``, because
+        ``delta_omega = omega_res - omega_p``, so a positive laser-frequency
+        excursion LOWERS the detuning.
+
+        The white part is drawn i.i.d. per round trip with variance
+        ``h0*f_s/2`` (the one-sided convention ``var = integral_0^{f_s/2} S df``);
+        the flicker part is FFT-synthesized with ``S(f_k) = h_-1/max(f_k, f_1)``,
+        so the single DC bin carries ``h_-1`` rather than diverging.
+
+        Examples
+        --------
+        >>> import jax
+        >>> pump = PumpNoise({"fsr_hz": 2.0e11, "pump_noise_enabled": 1,
+        ...                   "pump_freq_noise_h0_hz2_per_hz": 3e3})
+        >>> x = pump.sample_freq(jax.random.PRNGKey(0), 8)
+        >>> print(x.shape, x.dtype)
+        (8,) float64
+        >>> off = PumpNoise({"fsr_hz": 2.0e11})
+        >>> off.sample_freq(jax.random.PRNGKey(0), 3)
+        array([0., 0., 0.])
         """
         n = int(N)
         if not self.enabled or (self._h0 == 0.0 and self._hm1 == 0.0):
@@ -861,9 +1847,53 @@ class PumpNoise:
         return 2.0 * math.pi * dnu
 
     def sample_rin(self, key, N: int) -> np.ndarray:
-        """ε(t) (dimensionless), shape (N,), float64, one sample per round trip.
+        """Draw the pump relative-intensity-noise sequence.
 
-        Clipped so 1 + ε ≥ 0; warns if more than 0.01% of samples clip.
+        Parameters
+        ----------
+        key : jax.Array
+            JAX PRNG key.
+        N : int
+            Number of round trips [samples], sampled at ``f_s = 1/t_r``.
+
+        Returns
+        -------
+        numpy.ndarray
+            Shape ``(N,)``, dtype ``float64``, dimensionless: ``eps(t)`` in
+            ``P_in(t) = Pbar_in*(1 + eps(t))``, clipped so ``1 + eps >= 0``.
+            Exact zeros when the channel is disabled.
+
+        Raises
+        ------
+        ImportError
+            Propagated from the host-side generator.
+
+        Warns
+        -----
+        UserWarning
+            If more than 0.01% of the samples clip at ``eps = -1``, reporting
+            the clipped fraction. The configured RIN is then so large that the
+            Gaussian model is physically strained; the clipped sequence is
+            returned rather than silently renormalized.
+
+        Notes
+        -----
+        The floor is i.i.d. Gaussian per round trip with variance
+        ``floor*f_s/2``; the excess is FFT-synthesized exactly like the flicker
+        part of :meth:`sample_freq` -- same DC clamp -- and is zero above the
+        corner. The clip enforces the physical constraint that the pump power
+        cannot be negative.
+
+        Examples
+        --------
+        >>> import jax
+        >>> pump = PumpNoise({"fsr_hz": 2.0e11, "pump_noise_enabled": 1,
+        ...                   "pump_rin_floor_dbc_per_hz": -160.0})
+        >>> eps = pump.sample_rin(jax.random.PRNGKey(0), 8)
+        >>> print(eps.shape, eps.dtype)
+        (8,) float64
+        >>> bool((eps >= -1.0).all())
+        True
         """
         n = int(N)
         if not self.enabled:
@@ -902,6 +1932,36 @@ class PumpNoise:
 
 
 def plot_noise_psd() -> None:
+    """Write the noise-PSD comparison figure to ``analysis/figures``.
+
+    Returns
+    -------
+    None
+        The figure is written to
+        ``analysis/figures/noise_psd_comparison.pdf``; the directory is created
+        if needed.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the default config ``config/sin_params.yaml`` is missing.
+    OSError
+        If ``analysis/figures`` cannot be created or written.
+
+    Notes
+    -----
+    Overlays the three closed-form detuning PSDs [(rad/s)**2/Hz] of the
+    configured platform -- thermorefractive, pyro-electric/EO and
+    thermal-carrier -- on the Welch estimate of a 100000-sample realization of
+    their sum, plus a Si3N4 thermorefractive reference curve computed from
+    literature material constants. Agreement between the closed forms and the
+    Welch estimate is the visual form of the check
+    :func:`validate_noise_models` makes numerically.
+
+    No ``Examples`` section: this function writes a file and needs the
+    repository's config, so it is exercised by
+    ``python -m simulator.noise_models`` rather than by a doctest.
+    """
     cfg = _load_config()
     total = TotalNoise(cfg)
     trn = total.trn
@@ -955,6 +2015,46 @@ def plot_noise_psd() -> None:
 
 
 def validate_noise_models() -> None:
+    """Assert the sampled noise streams match their closed-form statistics.
+
+    Returns
+    -------
+    None
+        Returns normally iff every check passes.
+
+    Raises
+    ------
+    AssertionError
+        If :meth:`TotalNoise.sample` does not return the expected shape/dtype;
+        if the realized standard deviation is outside a decade of
+        ``sqrt((sigma_trn - sigma_pyroeo)**2 + var_tccr)`` [rad/s], the
+        prediction that follows from TRN and Pyro-EO sharing one temperature
+        realization with opposite signs; or if the thermal-carrier
+        autocorrelation time estimated from lag-1 correlation differs from
+        ``tau_carrier_s`` by more than 50%.
+    FileNotFoundError
+        If the default config ``config/sin_params.yaml`` is missing.
+
+    Warns
+    -----
+    UserWarning
+        If the thermal-carrier channel is active but not dominant over the
+        thermorefractive one, which for a chi(2) device suggests
+        ``surface_state_density_per_m2`` or the effective mode area needs
+        checking.
+
+    Notes
+    -----
+    The correlated-sum check is the one that matters: adding the channels in
+    quadrature would predict a LARGER total than is observed, because the
+    pyro-electric pull partially cancels the thermorefractive one. The
+    SiN-configured defaults leave the carrier channel identically zero, and both
+    the correlation-time check and the dominance warning are skipped in that
+    case rather than asserting on an all-zero stream.
+
+    No ``Examples`` section: this is the module's self-test entry point
+    (``python -m simulator.noise_models``) and reads the repository config.
+    """
     cfg = _load_config()
     total = TotalNoise(cfg)
     key = jax.random.PRNGKey(0)

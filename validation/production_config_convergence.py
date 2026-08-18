@@ -94,9 +94,50 @@ REPO_ROOT = __import__("pathlib").Path(__file__).resolve().parents[1]
 class ProductionOperatingPoint:
     """The configuration this study will characterize.
 
+    Parameters
+    ----------
+    name : str
+        Identifier of the operating point, used in artifact names.
+    delta_omega_over_kappa : float
+        Operating detuning in units of ``kappa`` [dimensionless].
+    solver_flags : dict
+        The production solver flags, copied from
+        ``analysis.dks_access.PRODUCTION_NUMERICS``.
+    n_substeps_ladder : tuple of int
+        Sub-step refinement levels [dimensionless]. Starts AT production, since
+        refining below it would characterize a configuration nobody runs.
+    n_tau_ladder : tuple of int
+        Fast-time grid sizes to sweep.
+    observable_source : str
+        Dotted path of the observable set the study will reuse.
+    extra_observables : tuple of str
+        Additional observables beyond that set: dispersive-wave position
+        [mode number], dispersive-wave power [dBc], 3 dB span [modes] and comb
+        energy fraction [dimensionless].
+    questions : tuple of str, optional
+        The questions the study must answer, stated up front so the result
+        cannot be quietly rescoped afterwards.
+
+    Raises
+    ------
+    dataclasses.FrozenInstanceError
+        On any attempt to mutate an instance.
+
+    Notes
+    -----
     Every field is READ from the production modules rather than restated, so a
     change to production shows up here as a test failure rather than as a study
     that silently characterizes something nobody runs.
+
+    Examples
+    --------
+    >>> op = PRODUCTION_OPERATING_POINT
+    >>> op.name
+    'production_dw10k'
+    >>> op.n_substeps_ladder[0]        # the ladder starts at production
+    4
+    >>> len(op.questions) >= 2
+    True
     """
 
     name: str
@@ -144,15 +185,75 @@ PRODUCTION_OPERATING_POINT = _production_operating_point()
 
 
 def dealias_cutoff(n_tau: int) -> int:
-    """Highest |mu| SURVIVING the 2/3 dealias at this grid size.
+    """Return the highest mode number surviving the 2/3 dealias at a grid size.
 
-    The whole point of question 2: compare this against the DW crossings at
-    |mu| ~ 3038 and 3239.
+    Parameters
+    ----------
+    n_tau : int
+        Fast-time grid size.
+
+    Returns
+    -------
+    int
+        Highest ``|mu|`` [mode number, dimensionless] not zeroed by the 2/3
+        dealiasing rule, i.e. ``n_tau // 3``.
+
+    Raises
+    ------
+    TypeError
+        If ``n_tau`` cannot be coerced to ``int``.
+
+    Notes
+    -----
+    The whole point of the study's second question: compare this against the
+    dispersive-wave crossings at ``|mu| ~ 3038`` and ``3239``. At
+    ``n_tau = 8192`` the cutoff is 2730, which is BELOW both crossings -- so an
+    artifact quoting dispersive-wave physics at that grid size has had the
+    dispersive wave dealiased away.
+
+    Examples
+    --------
+    >>> dealias_cutoff(8192)          # below the DW crossings at 3038, 3239
+    2730
+    >>> dealias_cutoff(16384)         # above them
+    5461
+    >>> bool(dealias_cutoff(8192) < 3038 < dealias_cutoff(16384))
+    True
     """
     return int(n_tau // 3)
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Refuse to run, printing what the declared study would cost and answer.
+
+    Parameters
+    ----------
+    argv : list of str or None, optional
+        Accepted for signature compatibility with the other validation
+        entry points and deliberately unused.
+
+    Returns
+    -------
+    int
+        Never returns: the function always raises.
+
+    Raises
+    ------
+    SystemExit
+        Always, with a message naming the operating point, the two ladders, the
+        dealias cutoffs, the observables and the questions the study must
+        answer.
+
+    Notes
+    -----
+    This module is a SCAFFOLD: it declares the next validation study, it does
+    not perform it. Running the study costs real compute, so triggering it must
+    be a deliberate act rather than the side effect of importing or executing a
+    module -- hence a refusal that documents itself instead of a stub that
+    quietly does nothing.
+
+    No ``Examples`` section: calling it raises by design.
+    """
     op = PRODUCTION_OPERATING_POINT
     cutoffs = {n: dealias_cutoff(n) for n in op.n_tau_ladder}
     raise SystemExit(
