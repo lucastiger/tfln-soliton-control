@@ -248,7 +248,7 @@ class Criterion:
     ours_key : str or None, optional
         Key of this repository's measured value.
     pylle_key : str or None, optional
-        Key of the reference code's measured value.
+        Key of pyLLE's measured value.
     conv_key : str or None, optional
         Observable name in BOTH convergence studies, from which a GATED
         tolerance is derived. A GATED criterion without one derives its own
@@ -522,7 +522,7 @@ class DerivedTolerance:
     u_ours : float or None, optional
         This repository's measured numerical uncertainty for the observable.
     u_pylle : float or None, optional
-        The reference code's, from its own refinement study.
+        pyLLE's, from its own refinement study.
     coverage_factor : float, optional
         The ``k`` used in :func:`combine`, default :data:`COVERAGE_FACTOR`.
     floor : float or None, optional
@@ -763,7 +763,7 @@ def derive_tolerances(ours_path: Path | str | None = None,
         This repository's convergence study; ``None`` (default) uses
         ``validation/results/convergence_lle_dw30k.json``.
     pylle_path : pathlib.Path or str or None, optional
-        The reference code's refinement study; ``None`` (default) uses
+        pyLLE's refinement study; ``None`` (default) uses
         ``validation/results/pylle_refinement_dw30k.json``.
     ours_level : str, optional
         Which uncertainty to read from our study, default

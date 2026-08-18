@@ -468,7 +468,7 @@ def containment_verdict(ours_conv: dict, pylle_conv: dict, *, absolute: bool,
         Our refinement ladder's Richardson result: the extrapolated limit (in
         the observable's units) and the relative uncertainty.
     pylle_conv : dict
-        The reference code's, from its own refinement study.
+        pyLLE's, from its own refinement study.
     absolute : bool
         ``True`` when the observable is absolute (a mode index), so each
         relative uncertainty is scaled by that code's own limit before
@@ -492,8 +492,9 @@ def containment_verdict(ours_conv: dict, pylle_conv: dict, *, absolute: bool,
     Symmetric by construction: NEITHER code supplies the band the other is
     measured against. Each contributes its own extrapolated limit and its own
     uncertainty, and the verdict is a statement about the pair. An asymmetric
-    test -- one code's answer as "truth", the other's as "error" -- would be a
-    different and much weaker claim.
+    test -- treating one code's answer as ground truth and the other's
+    departure from it as the thing being measured -- would be a different and
+    much weaker claim, and this module deliberately does not make it.
 
     No ``Examples`` section: a meaningful call needs two completed refinement
     ladders.
@@ -572,7 +573,7 @@ def run_ours(ramp: np.ndarray, seed: np.ndarray, d_int_fftorder: np.ndarray,
         The derived config both codes are driven from.
     n_substeps : int, optional
         Strang sub-steps per round trip [dimensionless], default 1 -- matching
-        the reference kernel's one step per round trip.
+        pyLLE's one step per round trip.
 
     Returns
     -------
@@ -1272,7 +1273,7 @@ def main(argv: list[str] | None = None) -> int:
     ----------
     argv : list of str or None, optional
         Command-line arguments; ``None`` (default) reads ``sys.argv[1:]``.
-        ``--pylle-python`` and ``--julia-bin`` locate the reference
+        ``--pylle-python`` and ``--julia-bin`` locate the pyLLE
         environment and default to the ``PYLLE_PYTHON`` and ``JULIA_BIN``
         environment variables.
 
@@ -1290,15 +1291,15 @@ def main(argv: list[str] | None = None) -> int:
         From :mod:`validation.criteria` if a tolerance changed between
         derivation and evaluation, or the report fails its own schema.
     FileNotFoundError
-        If the reference interpreter, the Julia binary or the dispersion CSV
+        If the pyLLE interpreter, the Julia binary or the dispersion CSV
         cannot be found.
 
     Notes
     -----
     Tolerances are DERIVED first, from the two measured uncertainty studies,
     and fingerprinted before any comparison value is read; the report cannot be
-    built if one moved afterwards. The reference code runs out of process under
-    its own interpreter, which pins ``numpy < 2`` and needs a Julia toolchain.
+    built if one moved afterwards. pyLLE runs out of process under its own
+    interpreter, which pins ``numpy < 2`` and needs a Julia toolchain.
 
     Writes ``validation/results/pylle_crosscheck_v2.json``, its fields archive
     and the in-run figure. This cross-check is FROZEN: re-running it is one of
@@ -2182,7 +2183,7 @@ def _print_report(report, containment, containment_shipped, lad_o, lad_p,
     spec_contain : dict
         The result of :func:`spectral_containment`.
     picard_test : dict
-        The reference code's Picard-tolerance sensitivity check.
+        pyLLE's Picard-tolerance sensitivity check.
 
     Returns
     -------

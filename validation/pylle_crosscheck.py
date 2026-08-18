@@ -444,8 +444,8 @@ def ours_to_pylle(ours: dict, f_pmp_hz: float | None = None) -> dict:
     >>> bool(abs(lhs / device["gamma_LLE_per_J_per_s"] - 1) < 1e-12)
     True
 
-    The pump phase is fixed at -pi/2 so the reference code's drive comes out
-    real and positive:
+    The pump phase is fixed at -pi/2 so pyLLE's drive comes out real and
+    positive:
 
     >>> bool(abs(forward["phi_pmp_rad"] + 3.141592653589793 / 2) < 1e-15)
     True
@@ -890,8 +890,8 @@ def build_pylle_dispfile(path: Path, mu: np.ndarray, d_int_ours: np.ndarray,
     property of the file both codes read, instead of a correction applied to
     one code's output.
 
-    No ``Examples`` section: it writes a file for the out-of-process reference
-    code to consume.
+    No ``Examples`` section: it writes a file for the out-of-process pyLLE
+    run to consume.
     """
     d_int_mirror = d_int_ours[::-1].copy()          # D_int(-mu) on a symmetric grid
     omega_p = 2.0 * math.pi * f_pmp_hz + d1 * mu + d_int_mirror
@@ -991,8 +991,8 @@ def observables(field_ours: np.ndarray, t_r: float, mu: np.ndarray) -> dict:
     ----------
     field_ours : numpy.ndarray
         Final field in OUR convention, shape ``(n_modes,)``, complex, units
-        sqrt(J). The reference code's field must ALREADY have been mapped
-        through ``conj(A)*sqrt(t_r)`` before arriving here.
+        sqrt(J). pyLLE's field must ALREADY have been mapped through
+        ``conj(A)*sqrt(t_r)`` before arriving here.
     t_r : float
         Round-trip time [s].
     mu : numpy.ndarray
@@ -1334,7 +1334,7 @@ def run_ours(delta_omega_ramp: np.ndarray, seed: np.ndarray, d_int_fftorder: np.
 
     Notes
     -----
-    ``n_substeps = 1`` with ``fine_cadence_M = 1`` matches the reference code's
+    ``n_substeps = 1`` with ``fine_cadence_M = 1`` matches pyLLE's
     one-step-per-round-trip kernel EXACTLY. Matching the discretization is the
     point: two codes integrating the same equation with different step counts
     would differ for a reason that is nobody's error, and the resulting number
@@ -1477,7 +1477,7 @@ def main(argv: list[str] | None = None) -> int:
     ----------
     argv : list of str or None, optional
         Command-line arguments; ``None`` (default) reads ``sys.argv[1:]``.
-        ``--pylle-python`` and ``--julia-bin`` locate the reference
+        ``--pylle-python`` and ``--julia-bin`` locate the pyLLE
         environment and default to the ``PYLLE_PYTHON`` and ``JULIA_BIN``
         environment variables.
 
@@ -1495,12 +1495,12 @@ def main(argv: list[str] | None = None) -> int:
         From :func:`assert_round_trip` on a translation failure, or from
         :func:`run_ours` if the run left the programmed ramp.
     FileNotFoundError
-        If the reference interpreter, the Julia binary or the dispersion CSV
+        If the pyLLE interpreter, the Julia binary or the dispersion CSV
         cannot be found.
 
     Notes
     -----
-    The reference code runs OUT OF PROCESS, under its own interpreter: it pins
+    pyLLE runs OUT OF PROCESS, under its own interpreter: it pins
     ``numpy < 2`` and needs a Julia toolchain, so it cannot share an
     environment with this solver. ``--worker`` is intercepted in ``__main__``
     before this function is reached and is declared only so ``--help`` does not

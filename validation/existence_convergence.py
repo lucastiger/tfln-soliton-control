@@ -415,7 +415,7 @@ def recompute_g7(edge: str, ours_bracket_v2, ours_bracket_refined, pylle_bracket
     ours_bracket_refined : sequence of float or None
         Our refined bracket [kappa], from the finest level of the ladder.
     pylle_bracket : sequence of float or None
-        The reference code's bracket [kappa].
+        pyLLE's bracket [kappa].
     u_disc : float or None
         Measured discretization uncertainty [kappa], or ``None`` to omit the
         term entirely.
