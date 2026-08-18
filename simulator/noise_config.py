@@ -135,52 +135,109 @@ class NoiseConfig:
     All eight switches default to ``False``, so ``NoiseConfig()`` is the fully
     deterministic configuration.
 
-    Switch fields
-    -------------
-    quantum_vacuum:
-        Quantum-vacuum Langevin drive (additive on the field).
-    trn:
-        Thermorefractive detuning noise.
-    pyro_eo:
-        Pyro-electric / electro-optic detuning noise. Driven by the SAME temperature
-        realization as ``trn``.
-    tccr:
-        Thermal carrier / surface-state detuning noise (independent stream).
-    pump_freq_noise:
-        Pump-laser frequency noise (enters as a detuning).
-    pump_rin:
-        Pump relative-intensity noise (modulates the drive amplitude).
-    fsr:
-        Thermorefractive-driven FSR / repetition-rate noise. Also driven by the ``trn``
-        temperature realization.
-    thermal_feedback:
-        **NOT a noise channel.** This switch controls the DETERMINISTIC thermo-optic
-        ODE — the single-pole ``dΔT/dt`` feedback that shifts the detuning with
-        absorbed power. It is a *dynamics* toggle, listed here only because a benchmark
-        run must record it alongside the stochastic channels to be reproducible. A run
-        with every stochastic channel off may legitimately still want thermo-optic
-        dynamics on, which is why :meth:`all_off` does not force it off.
+    Parameters
+    ----------
+    quantum_vacuum : bool, optional
+        SWITCH. Quantum-vacuum Langevin drive, additive on the field
+        [sqrt(J) per fine step]. arXiv:2604.05897v1 Sec. V.B.2, Eq. 126.
+        Default ``False``.
+    trn : bool, optional
+        SWITCH. Thermorefractive detuning noise [rad/s]. Default ``False``.
+    pyro_eo : bool, optional
+        SWITCH. Pyro-electric / electro-optic detuning noise [rad/s], driven by
+        the SAME temperature realization dT(t) [K] as ``trn``. Default ``False``.
+    tccr : bool, optional
+        SWITCH. Thermal-carrier / surface-state detuning noise [rad/s], an
+        independent stream. Default ``False``.
+    pump_freq_noise : bool, optional
+        SWITCH. Pump-laser frequency noise, entering as a detuning [rad/s].
+        arXiv:2604.05897v1 Sec. V.B.4. Default ``False``.
+    pump_rin : bool, optional
+        SWITCH. Pump relative-intensity noise (dimensionless eps, modulating the
+        drive amplitude). arXiv:2604.05897v1 Sec. V.B.5. Default ``False``.
+    fsr : bool, optional
+        SWITCH. Thermorefractive-driven FSR / repetition-rate noise
+        dD1(t) [rad/s], also driven by the ``trn`` temperature realization.
+        Default ``False``.
+    thermal_feedback : bool, optional
+        SWITCH, but **NOT a noise channel**. Controls the DETERMINISTIC
+        thermo-optic ODE -- the single-pole ``dDeltaT/dt`` feedback [K/s] that
+        shifts the detuning with absorbed power [W]. It is a *dynamics* toggle,
+        carried here only because a benchmark run must record it alongside the
+        stochastic channels to be reproducible. A run with every stochastic
+        channel off may legitimately still want thermo-optic dynamics on, which
+        is why :meth:`all_off` does not force it off. Default ``False``.
+    trn_psd_model : {'single_pole', 'kondratiev_gorodetsky', 'csv'}, optional
+        PARAMETER. Spectrum of the temperature fluctuation [K**2/Hz] driving
+        ``trn`` / ``pyro_eo`` / ``fsr``. Default ``'single_pole'``.
+    trn_ar1_stationary_init : bool, optional
+        PARAMETER. Start the AR(1) generator from its stationary distribution
+        instead of from zero, removing the ``~tau_th/(2*t_r)`` round-trip
+        start-up transient. Default ``False`` (bit-identical to the historical
+        stream).
+    thermal_integrator : {'euler', 'exponential'}, optional
+        PARAMETER. Integrator for the thermo-optic ODE. Default ``'euler'``,
+        which is what every committed golden trajectory was produced with.
+    quantum_injection_cadence : {0, 1}, optional
+        PARAMETER. ``0`` injects the vacuum increment once per fine step
+        (dt_fine = t_r/M [s]; the exact prescription); ``1`` once per round trip
+        (dt = t_r [s]). Default ``0``.
+    quantum_seed_vacuum_init : bool, optional
+        PARAMETER. Seed a cold start at the half-photon-per-mode vacuum level
+        [J] rather than with the legacy ``1e-3*|e_cw|`` ad-hoc seed. Default
+        ``True``.
+    legacy_segment_noise : bool, optional
+        PARAMETER. ``True`` regenerates segment noise from zero per segment (the
+        historical behaviour); ``False`` slices one stationary full-trajectory
+        realization, removing the per-segment decorrelation transient. Default
+        ``True``.
+    noise_dtype : {'float32', 'float64'}, optional
+        PARAMETER. Working precision of the generated classical noise
+        sequences. Default ``'float32'``.
+    seed : int or None, optional
+        PARAMETER. Master seed for the run (dimensionless). ``None`` means the
+        caller supplies the JAX PRNG key. Default ``None``.
 
-    Parameter fields
-    ----------------
-    trn_psd_model:
-        Spectrum used for the temperature fluctuation driving ``trn``/``pyro_eo``/``fsr``.
-    trn_ar1_stationary_init:
-        Start the AR(1) generator from its stationary distribution instead of from
-        zero, removing the start-up transient.
-    thermal_integrator:
-        Integrator for the thermo-optic ODE.
-    quantum_injection_cadence:
-        ``0`` = inject once per fine step (exact); ``1`` = once per round trip.
-    quantum_seed_vacuum_init:
-        Seed a cold start at the vacuum level rather than with the legacy ad-hoc seed.
-    legacy_segment_noise:
-        ``True`` regenerates segment noise from zero per segment (historical
-        behaviour); ``False`` slices one stationary full-trajectory realization.
-    noise_dtype:
-        Working precision of the generated classical noise sequences.
-    seed:
-        Master seed for the run; ``None`` means the caller supplies the key.
+    Raises
+    ------
+    ValueError
+        From :meth:`__post_init__` if ``trn_psd_model``, ``thermal_integrator``
+        or ``noise_dtype`` is outside its allowed set, or if
+        ``quantum_injection_cadence`` is not the ``int`` 0 or 1 (a ``bool`` is
+        rejected explicitly: ``True`` and ``1`` would serialise differently and
+        so produce two digests for one configuration).
+
+    Notes
+    -----
+    The eight ``bool`` fields listed in :data:`SWITCH_FIELDS` are SWITCHES: each
+    turns a mechanism on or off and every one defaults to ``False``. Every other
+    field is a PARAMETER -- it shapes a channel that is already on and has no
+    "off" meaning of its own. Three parameters happen to be booleans
+    (:data:`PARAMETER_BOOL_DEFAULTS`) and two of those default to ``True``; they
+    are NOT switches, and "all channels off" says nothing about them.
+
+    The class is a frozen dataclass, so an instance is hashable and safe to
+    share across trajectories, and :meth:`sha256` gives it a stable content
+    identity for a run manifest.
+
+    Examples
+    --------
+    The default is fully deterministic:
+
+    >>> NoiseConfig().enabled_channels
+    ()
+
+    Leave-one-out ablation off the full-physics configuration:
+
+    >>> NoiseConfig.all_on(tccr=False).enabled_channels
+    ('quantum_vacuum', 'trn', 'pyro_eo', 'pump_freq_noise', 'pump_rin', 'fsr')
+
+    Validation happens at construction, not at first use:
+
+    >>> NoiseConfig(thermal_integrator="rk4")
+    Traceback (most recent call last):
+        ...
+    ValueError: thermal_integrator must be one of ('euler', 'exponential'), got 'rk4'.
     """
 
     # --- switches (all default False) ---------------------------------------
@@ -207,6 +264,36 @@ class NoiseConfig:
     # validation
     # -----------------------------------------------------------------------
     def __post_init__(self) -> None:
+        """Validate every enumerated field at construction time.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        ValueError
+            If ``trn_psd_model`` is not in :data:`TRN_PSD_MODELS`, if
+            ``thermal_integrator`` is not in :data:`THERMAL_INTEGRATORS`, if
+            ``noise_dtype`` is not in :data:`NOISE_DTYPES`, or if
+            ``quantum_injection_cadence`` is not an ``int`` in
+            :data:`QUANTUM_INJECTION_CADENCES`.
+
+        Notes
+        -----
+        ``bool`` is a subclass of ``int``, so ``True in (0, 1)`` is ``True``.
+        The cadence check rejects ``bool`` explicitly because ``True`` and ``1``
+        serialise differently (``"true"`` versus ``"1"``) and would therefore
+        give two different :meth:`sha256` digests for one semantically identical
+        configuration.
+
+        Examples
+        --------
+        >>> NoiseConfig(quantum_injection_cadence=True)
+        Traceback (most recent call last):
+            ...
+        ValueError: quantum_injection_cadence must be one of (0, 1) (int, not bool), got True.
+        """
         if self.trn_psd_model not in TRN_PSD_MODELS:
             raise ValueError(
                 f"trn_psd_model must be one of {TRN_PSD_MODELS}, "
@@ -239,17 +326,45 @@ class NoiseConfig:
     # -----------------------------------------------------------------------
     @classmethod
     def all_off(cls, **overrides: Any) -> "NoiseConfig":
-        """Every *stochastic* channel off.
+        """Construct a configuration with every *stochastic* channel off.
 
+        Parameters
+        ----------
+        **overrides
+            Any :class:`NoiseConfig` field, applied AFTER the seven stochastic
+            channels are forced ``False``. This is what makes the constructor
+            double as "one channel only".
+
+        Returns
+        -------
+        NoiseConfig
+            A frozen instance with every field in :data:`NOISE_CHANNELS` set to
+            ``False`` except those named in ``overrides``.
+
+        Raises
+        ------
+        TypeError
+            If ``overrides`` names a field that does not exist.
+        ValueError
+            From :meth:`__post_init__` for an out-of-range enumerated value.
+
+        Notes
+        -----
         ``thermal_feedback`` is intentionally NOT forced off. It controls the
-        deterministic thermo-optic ODE, which is dynamics rather than noise: a
-        deterministic run may legitimately want the thermal feedback active. It is
-        therefore left at whatever value is passed in, which is ``False`` by default
-        because that is the field default — pass ``all_off(thermal_feedback=True)`` for
-        a deterministic run *with* thermo-optic dynamics.
+        deterministic thermo-optic ODE, which is dynamics rather than noise, and
+        a deterministic run may legitimately want it active. It is left at
+        whatever is passed in -- ``False`` by default, because that is the field
+        default -- so pass ``all_off(thermal_feedback=True)`` for a
+        deterministic run WITH thermo-optic dynamics.
 
-        Any other field may also be overridden, so this doubles as "one channel only":
-        ``NoiseConfig.all_off(trn=True)``.
+        Examples
+        --------
+        >>> NoiseConfig.all_off().enabled_channels
+        ()
+        >>> NoiseConfig.all_off(trn=True).enabled_channels
+        ('trn',)
+        >>> NoiseConfig.all_off(thermal_feedback=True).thermal_feedback
+        True
         """
         values: dict[str, Any] = {channel: False for channel in NOISE_CHANNELS}
         values.update(overrides)
@@ -257,11 +372,40 @@ class NoiseConfig:
 
     @classmethod
     def all_on(cls, **overrides: Any) -> "NoiseConfig":
-        """Every switch on, including ``thermal_feedback``.
+        """Construct the full-physics configuration: every switch on.
 
-        This is the "full physics" configuration: all seven stochastic channels plus
-        the deterministic thermo-optic feedback. Individual fields may be overridden,
-        e.g. ``NoiseConfig.all_on(tccr=False)`` for a leave-one-out ablation.
+        Parameters
+        ----------
+        **overrides
+            Any :class:`NoiseConfig` field, applied AFTER every field in
+            :data:`SWITCH_FIELDS` is forced ``True``.
+
+        Returns
+        -------
+        NoiseConfig
+            All seven stochastic channels plus the deterministic thermo-optic
+            feedback enabled, modified by ``overrides``.
+
+        Raises
+        ------
+        TypeError
+            If ``overrides`` names a field that does not exist.
+        ValueError
+            From :meth:`__post_init__` for an out-of-range enumerated value.
+
+        Notes
+        -----
+        Overriding one channel to ``False`` is the leave-one-out ablation the
+        benchmark's per-channel noise attribution is built on.
+
+        Examples
+        --------
+        >>> NoiseConfig.all_on().thermal_feedback
+        True
+        >>> len(NoiseConfig.all_on().enabled_channels)
+        7
+        >>> len(NoiseConfig.all_on(tccr=False).enabled_channels)
+        6
         """
         values: dict[str, Any] = {switch: True for switch in SWITCH_FIELDS}
         values.update(overrides)
@@ -271,7 +415,40 @@ class NoiseConfig:
     def from_yaml(cls, path: str | Path) -> "NoiseConfig":
         """Build a config from a YAML file.
 
-        Preferred form — a top-level ``noise:`` block whose keys are
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            YAML file carrying either a top-level ``noise:`` mapping (preferred)
+            or, failing that, the legacy switches inside
+            ``physical_parameters``.
+
+        Returns
+        -------
+        NoiseConfig
+            The declared configuration. Fields absent from the file keep their
+            dataclass defaults.
+
+        Raises
+        ------
+        ValueError
+            If the document is not a mapping, if ``noise`` or
+            ``physical_parameters`` is present but is not a mapping, if the
+            ``noise`` block carries an unknown key, or -- via :func:`_as_bool`
+            -- if a legacy switch is not boolean-valued.
+        OSError
+            If ``path`` cannot be opened.
+        yaml.YAMLError
+            If the file is not valid YAML.
+
+        Warns
+        -----
+        DeprecationWarning
+            When the legacy fallback consumed at least one
+            ``physical_parameters`` key, naming every key it used.
+
+        Notes
+        -----
+        Preferred form -- a top-level ``noise:`` block whose keys are
         :class:`NoiseConfig` field names::
 
             noise:
@@ -298,6 +475,23 @@ class NoiseConfig:
            is reported ``False`` even though the legacy solver always integrates the
            thermo-optic ODE. Configs that need those channels stated truthfully should
            carry an explicit ``noise:`` block.
+
+        Examples
+        --------
+        >>> import pathlib, tempfile
+        >>> path = pathlib.Path(tempfile.mkdtemp()) / "cfg.yaml"
+        >>> _ = path.write_text(chr(10).join(
+        ...     ["noise:", "  trn: true", "  quantum_vacuum: true"]))
+        >>> NoiseConfig.from_yaml(path).enabled_channels
+        ('quantum_vacuum', 'trn')
+
+        A typo'd channel name is an error, never a silently-off channel:
+
+        >>> _ = path.write_text(chr(10).join(["noise:", "  trnn: true"]))
+        >>> NoiseConfig.from_yaml(path)
+        Traceback (most recent call last):
+            ...
+        ValueError: ...unknown key(s) in the 'noise' block: ['trnn']...
         """
         path = Path(path)
         with path.open("r", encoding="utf-8") as fh:
@@ -371,16 +565,69 @@ class NoiseConfig:
     # serialisation / identity
     # -----------------------------------------------------------------------
     def to_dict(self) -> dict[str, Any]:
-        """JSON-serialisable mapping of every field, key-sorted."""
+        """Return a JSON-serialisable, key-sorted mapping of every field.
+
+        Returns
+        -------
+        dict
+            One entry per dataclass field, ordered by key. Values are the plain
+            ``bool`` / ``int`` / ``str`` / ``None`` leaves the dataclass holds,
+            so the mapping round-trips through :func:`json.dumps` unchanged.
+
+        Raises
+        ------
+        TypeError
+            Only if a future field were to hold a non-copyable value;
+            ``dataclasses.asdict`` deep-copies its input.
+
+        Notes
+        -----
+        Key-sorting here (rather than only inside :meth:`sha256`) means the
+        mapping written into a run manifest has the same ordering as the bytes
+        that were hashed, so a manifest can be diffed line-by-line against
+        another run.
+
+        Examples
+        --------
+        >>> d = NoiseConfig(trn=True, seed=7).to_dict()
+        >>> list(d)[:3]
+        ['fsr', 'legacy_segment_noise', 'noise_dtype']
+        >>> d["trn"], d["seed"], d["thermal_integrator"]
+        (True, 7, 'euler')
+        """
         raw = dataclasses.asdict(self)
         return {key: raw[key] for key in sorted(raw)}
 
     def sha256(self) -> str:
-        """Stable content hash of the configuration.
+        """Return the stable content hash of the configuration.
 
-        ``sha256(json.dumps(self.to_dict(), sort_keys=True))``. Stable across
-        processes and across field *reordering* in the dataclass, and sensitive to any
-        field value change — suitable as a run-manifest identity.
+        Returns
+        -------
+        str
+            64 lowercase hex characters:
+            ``sha256(json.dumps(self.to_dict(), sort_keys=True))``.
+
+        Raises
+        ------
+        TypeError
+            If a future field were not JSON-serialisable.
+
+        Notes
+        -----
+        Stable across processes and across field REORDERING in the dataclass,
+        and sensitive to any field VALUE change -- which is what makes it usable
+        as a run-manifest identity. :func:`simulator.provenance.noise_config_sha256`
+        delegates here rather than re-canonicalizing, so the digest recorded in
+        the noise-off identity manifests cannot drift from this one.
+
+        Examples
+        --------
+        >>> len(NoiseConfig().sha256())
+        64
+        >>> NoiseConfig().sha256() == NoiseConfig().sha256()
+        True
+        >>> NoiseConfig().sha256() == NoiseConfig(trn=True).sha256()
+        False
         """
         payload = json.dumps(self.to_dict(), sort_keys=True)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -390,11 +637,70 @@ class NoiseConfig:
     # -----------------------------------------------------------------------
     @property
     def enabled_channels(self) -> tuple[str, ...]:
-        """The stochastic channels that are on, in declaration order."""
+        """Return the stochastic channels that are on, in declaration order.
+
+        Returns
+        -------
+        tuple of str
+            A subset of :data:`NOISE_CHANNELS`, in that tuple's order.
+            ``thermal_feedback`` never appears -- it is deterministic dynamics,
+            not a noise channel.
+
+        Raises
+        ------
+        AttributeError
+            Only if :data:`NOISE_CHANNELS` were to name a field the dataclass
+            does not have; ``tests/test_noise_config.py`` guards against that.
+
+        Notes
+        -----
+        Declaration order rather than alphabetical order, so a run log reads in
+        the same sequence as the channel inventory in
+        ``docs/NOISE_CHANNEL_INVENTORY.md``.
+
+        Examples
+        --------
+        >>> NoiseConfig(trn=True, quantum_vacuum=True).enabled_channels
+        ('quantum_vacuum', 'trn')
+        >>> NoiseConfig(thermal_feedback=True).enabled_channels
+        ()
+        """
         return tuple(c for c in NOISE_CHANNELS if getattr(self, c))
 
     def describe(self) -> str:
-        """Human-readable summary for run logs: one line per enabled channel."""
+        """Render a human-readable summary for run logs.
+
+        Returns
+        -------
+        str
+            A multi-line block: a header line carrying the truncated
+            :meth:`sha256` and the seed, one ``[on ]`` line per enabled
+            stochastic channel with the parameters that shape it, a
+            ``thermal_feedback`` line flagged as NOT a noise channel, and a
+            trailing line with the working dtype and the segment-noise policy.
+
+        Raises
+        ------
+        KeyError
+            Only if :data:`NOISE_CHANNELS` gained a channel without a matching
+            entry in the local ``detail`` mapping.
+
+        Notes
+        -----
+        ``thermal_feedback`` is always printed, on or off, precisely because it
+        is easy to forget that a "deterministic" run may still be integrating
+        the thermo-optic ODE.
+
+        Examples
+        --------
+        >>> lines = NoiseConfig.all_off(trn=True).describe().splitlines()
+        >>> lines[0].startswith("NoiseConfig sha256=")
+        True
+        >>> print(lines[1])
+          [on ] trn              psd_model=single_pole, ar1_stationary_init=False
+        >>> print(NoiseConfig().describe().splitlines()[1])
+          [off] no stochastic channels enabled (deterministic run)
+        """
         lines = [f"NoiseConfig sha256={self.sha256()[:16]}… seed={self.seed!r}"]
 
         detail: dict[str, str] = {

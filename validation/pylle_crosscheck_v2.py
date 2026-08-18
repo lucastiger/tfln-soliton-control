@@ -361,7 +361,40 @@ def _strip_volatile(obj):
 
 
 def numerical_digest(payload: dict) -> str:
-    """sha256 over every non-volatile field. Two identical runs must match (A7)."""
+    """Hash every non-volatile field of the report, so two runs can be compared.
+
+    Parameters
+    ----------
+    payload : dict
+        The report. Its own ``numerical_digest`` key, if present, is excluded.
+
+    Returns
+    -------
+    str
+        64 lowercase hex characters over the payload with every key in
+        :data:`VOLATILE_KEYS` removed recursively.
+
+    Raises
+    ------
+    TypeError
+        If a value is neither JSON-serialisable nor ``str``-representable.
+
+    Notes
+    -----
+    Acceptance criterion A7: two identical runs must produce the same digest.
+    Timestamps, wall-clock times, hostname and paths are stripped recursively,
+    so the digest answers "did the numbers change?" and not "was this the same
+    invocation?" -- the second question has an uninteresting answer.
+
+    Examples
+    --------
+    >>> len(numerical_digest({"a": 1}))
+    64
+    >>> numerical_digest({"a": 1}) == numerical_digest({"a": 1, "wall_s": 3})
+    True
+    >>> numerical_digest({"a": 1}) == numerical_digest({"a": 2})
+    False
+    """
     stripped = _strip_volatile({k: v for k, v in payload.items()
                                 if k != "numerical_digest"})
     return hashlib.sha256(
@@ -370,10 +403,42 @@ def numerical_digest(payload: dict) -> str:
 
 
 def _fmt(v, spec="", dash="-"):
-    """Format ``v``, rendering a missing value as a dash PADDED TO THE SAME WIDTH.
+    """Format a value, rendering a missing one as a dash padded to the same width.
 
+    Parameters
+    ----------
+    v : object
+        The value. ``None`` and non-finite floats are treated as missing.
+    spec : str, optional
+        A ``format`` spec, e.g. ``"8.3f"``. Default ``""`` (plain ``str``).
+    dash : str, optional
+        The placeholder for a missing value, default ``"-"``.
+
+    Returns
+    -------
+    str
+        ``format(v, spec)`` when the value is present, otherwise ``dash``
+        right-justified to the width parsed out of ``spec``.
+
+    Raises
+    ------
+    ValueError
+        Propagated from ``format`` for a spec the value's type does not accept.
+
+    Notes
+    -----
     A dash that ignores the field width silently shifts every later column of a
-    table, which makes an unmeasured row look like a different row.
+    table, which makes an unmeasured row look like a different row -- the kind
+    of misreading that costs an afternoon.
+
+    Examples
+    --------
+    >>> _fmt(1.5, "8.3f")
+    '   1.500'
+    >>> _fmt(None, "8.3f")            # same width, so the columns still line up
+    '       -'
+    >>> _fmt(float("nan"), "8.3f") == _fmt(None, "8.3f")
+    True
     """
     if v is None or (isinstance(v, float) and not math.isfinite(v)):
         width = "".join(c for c in spec.split(".")[0] if c.isdigit())
@@ -396,6 +461,42 @@ def containment_verdict(ours_conv: dict, pylle_conv: dict, *, absolute: bool,
     uncertainties are relative, so for an absolute observable (a mode index)
     they are scaled by that code's own limit before combining -- otherwise a
     band in "fraction of 3075" would be compared against a gap in modes.
+
+    Parameters
+    ----------
+    ours_conv : dict
+        Our refinement ladder's Richardson result: the extrapolated limit (in
+        the observable's units) and the relative uncertainty.
+    pylle_conv : dict
+        The reference code's, from its own refinement study.
+    absolute : bool
+        ``True`` when the observable is absolute (a mode index), so each
+        relative uncertainty is scaled by that code's own limit before
+        combining. Keyword-only.
+    coverage : float
+        Coverage factor K [dimensionless]. Keyword-only.
+
+    Returns
+    -------
+    dict
+        Both limits, both uncertainties, the combined band, the gap between the
+        limits and the verdict.
+
+    Raises
+    ------
+    KeyError
+        If either ladder result is missing its limit or uncertainty.
+
+    Notes
+    -----
+    Symmetric by construction: NEITHER code supplies the band the other is
+    measured against. Each contributes its own extrapolated limit and its own
+    uncertainty, and the verdict is a statement about the pair. An asymmetric
+    test -- one code's answer as "truth", the other's as "error" -- would be a
+    different and much weaker claim.
+
+    No ``Examples`` section: a meaningful call needs two completed refinement
+    ladders.
     """
     out = {
         "ours_limit": None, "ours_U": None, "ours_p": None,
@@ -454,11 +555,49 @@ def containment_verdict(ours_conv: dict, pylle_conv: dict, *, absolute: bool,
 # ==========================================================================
 def run_ours(ramp: np.ndarray, seed: np.ndarray, d_int_fftorder: np.ndarray,
              dev: dict, config_path: str, n_substeps: int = 1) -> dict:
-    """Run this repo's solver over ``ramp`` from ``seed``; return field + timing.
+    """Run this repository's solver over a detuning ramp and report the residual.
 
-    Same call as ``pylle_crosscheck.run_ours`` and
-    ``convergence_lle.run_level``, but it also RETURNS the thermo-optic residual
-    instead of only asserting on it, because H6 is a reported criterion here.
+    Parameters
+    ----------
+    ramp : numpy.ndarray
+        Detuning per round trip [rad/s], shape ``(t_slow,)``.
+    seed : numpy.ndarray
+        Initial field, shape ``(n_modes,)``, complex, units sqrt(J).
+    d_int_fftorder : numpy.ndarray
+        ``D_int(mu)`` [rad/s], shape ``(n_modes,)``, in FFT-bin order.
+    dev : dict
+        Device parameters from
+        :func:`~validation.pylle_crosscheck.load_device`.
+    config_path : str
+        The derived config both codes are driven from.
+    n_substeps : int, optional
+        Strang sub-steps per round trip [dimensionless], default 1 -- matching
+        the reference kernel's one step per round trip.
+
+    Returns
+    -------
+    dict
+        ``field`` (n_modes,) complex128 [sqrt(J)], the wall-clock time [s], and
+        the thermo-optic residual: the largest relative deviation of
+        ``delta_omega_eff`` from the programmed ramp [dimensionless].
+
+    Raises
+    ------
+    ValueError
+        Propagated from the solver for a shape mismatch.
+    ImportError
+        If JAX is unavailable.
+
+    Notes
+    -----
+    The same call as :func:`~validation.pylle_crosscheck.run_ours` and
+    :func:`~validation.convergence_lle.run_level`, except that it RETURNS the
+    thermo-optic residual instead of only asserting on it: in v2 that residual
+    is criterion H6, a reported quantity with a threshold, rather than an
+    internal sanity check.
+
+    No ``Examples`` section: it runs a multi-thousand-round-trip solve on a
+    6601-mode grid.
     """
     import jax
     from simulator.lle_solver import solve_lle_ssfm_jax
@@ -506,6 +645,37 @@ def band_residual_table(dbc_ours: np.ndarray, dbc_pylle: np.ndarray,
     The phase columns are there to test the standing hypothesis that the wing
     gap tracks the under-resolved per-round-trip phase |D_int|*t_r. Reporting
     the band gap without them would leave that untestable.
+
+    Parameters
+    ----------
+    dbc_ours, dbc_pylle : numpy.ndarray
+        Per-mode spectra [dBc], shape ``(n_modes,)``, from the same estimator.
+    mu : numpy.ndarray
+        Mode numbers [dimensionless], shape ``(n_modes,)``.
+    d_int_nat : numpy.ndarray
+        ``D_int(mu)`` [rad/s], mu-centred, same shape.
+    t_r : float
+        Round-trip time [s].
+
+    Returns
+    -------
+    list of dict
+        One row per band in :data:`RESIDUAL_BANDS`: the ``mu_band``, the mode
+        count, the median and 90th-percentile ``ours - pyLLE`` difference [dB],
+        and the median and maximum ``|D_int|*t_r`` [rad] over that band.
+
+    Raises
+    ------
+    IndexError
+        If the arrays have different lengths.
+
+    Notes
+    -----
+    Median rather than mean, because the wing residual is heavy-tailed: a
+    handful of modes near a null dominate a mean and say nothing about the
+    band.
+
+    No ``Examples`` section: it needs both codes' spectra on a common grid.
     """
     resid = dbc_ours - dbc_pylle
     rows = []
@@ -527,7 +697,53 @@ def band_residual_table(dbc_ours: np.ndarray, dbc_pylle: np.ndarray,
 
 
 def spectral_containment(dbc: np.ndarray, mu: np.ndarray) -> dict:
-    """R9. Is the comb contained by the grid, or is it hitting the edge?"""
+    """Check whether the comb is contained by the grid or is hitting its edge.
+
+    Parameters
+    ----------
+    dbc : numpy.ndarray
+        Per-mode spectrum [dBc], shape ``(n_modes,)``, mu-centred.
+    mu : numpy.ndarray
+        Mode numbers [dimensionless], same shape.
+
+    Returns
+    -------
+    dict
+        ``mu_minus_half_dbc`` and ``mu_plus_half_dbc`` [dBc] -- the two grid
+        edges; ``threshold_dbc``; ``contained`` (bool); and ``warning`` --
+        ``None`` when contained, otherwise a message naming the worst edge.
+
+    Raises
+    ------
+    IndexError
+        If ``mu`` and ``dbc`` have different lengths.
+
+    Notes
+    -----
+    Criterion R9. When the comb is NOT contained, every observable that
+    integrates the wings -- line counts, band powers -- is grid-limited, and a
+    cross-code agreement on such a quantity would be an agreement about two
+    grids rather than about two physical solutions. Hence a warning that names
+    the consequence rather than a bare boolean.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> n = 401
+    >>> mu = np.arange(n) - n // 2
+    >>> quiet = np.full(n, -200.0)
+    >>> quiet[n // 2] = 0.0
+    >>> result = spectral_containment(quiet, mu)
+    >>> result["contained"], result["warning"] is None
+    (True, True)
+
+    A comb reaching the edge is flagged, with the reason:
+
+    >>> loud = np.full(n, -50.0)
+    >>> loud[n // 2] = 0.0
+    >>> spectral_containment(loud, mu)["contained"]
+    False
+    """
     edge_lo = float(dbc[mu == mu.min()][0])
     edge_hi = float(dbc[mu == mu.max()][0])
     worst = max(edge_lo, edge_hi)
@@ -553,6 +769,42 @@ def classify_field(field: np.ndarray, t_r: float, kappa: float,
     boundary it can flip on a small difference in a genuinely marginal state.
     Returning the contrast and the peak count alongside the boolean is what makes
     such a flip visible in the trace rather than invisible in a verdict.
+
+    Parameters
+    ----------
+    field : numpy.ndarray
+        Final field in OUR convention, shape ``(n_modes,)``, complex, units
+        sqrt(J).
+    t_r : float
+        Round-trip time [s].
+    kappa : float
+        Total loss rate [rad/s].
+    gamma : float
+        ``gamma_LLE`` [J^-1 s^-1].
+
+    Returns
+    -------
+    dict
+        ``single`` (bool), ``n_peaks`` [count] and ``contrast``
+        [dimensionless], plus whatever else the classifier recorded.
+
+    Raises
+    ------
+    ValueError
+        Propagated from
+        :func:`~validation.pylle_crosscheck.is_single_soliton` for an empty
+        field.
+
+    Notes
+    -----
+    The classifier is a THRESHOLD test -- contrast at or above 5, exactly one
+    circular connected component above the half-way level -- so near an
+    existence boundary it can flip on a small difference in a genuinely
+    marginal state. Recording what it saw is what makes such a flip visible in
+    the bisection trace instead of invisible inside a verdict.
+
+    No ``Examples`` section: it delegates to the v1 classifier, whose behaviour
+    is documented and exercised there.
     """
     from validation.pylle_crosscheck import is_single_soliton
 
@@ -562,11 +814,53 @@ def classify_field(field: np.ndarray, t_r: float, kappa: float,
 
 
 def initial_brackets(survival, scan_values):
-    """Coarse-grid brackets straddling each existence edge.
+    """Find the coarse-grid brackets straddling each existence edge.
 
-    Returns ``(lower, upper)`` where ``lower`` is ``(dead, alive)`` and ``upper``
-    is ``(alive, dead)``; either is ``None`` when the scan does not straddle that
-    edge. Pure function of the survival vector and the grid.
+    Parameters
+    ----------
+    survival : sequence of bool
+        Whether a soliton survived at each scanned detuning, in scan order.
+    scan_values : sequence of float
+        The scanned detunings [rad/s, or units of kappa -- whatever the caller
+        works in], same length and order.
+
+    Returns
+    -------
+    lower : tuple of float or None
+        ``(dead, alive)`` straddling the lower edge, or ``None`` when the scan
+        does not straddle it.
+    upper : tuple of float or None
+        ``(alive, dead)`` straddling the upper edge, or ``None`` likewise.
+
+    Raises
+    ------
+    IndexError
+        If ``scan_values`` is shorter than ``survival``.
+
+    Notes
+    -----
+    A pure function of the survival vector and the grid -- no solver, no state
+    -- which is what lets both this module and
+    :mod:`validation.existence_convergence` share it and so be certain they
+    bisect identically.
+
+    Returning ``None`` rather than clamping to the grid edge is deliberate: a
+    scan that never died has not located an edge, and reporting its endpoint as
+    one would invent a measurement.
+
+    Examples
+    --------
+    >>> survival = [False, False, True, True, True, False]
+    >>> values = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    >>> initial_brackets(survival, values)
+    ((2.0, 3.0), (5.0, 6.0))
+
+    A scan with no survivors, or one that never dies, brackets nothing:
+
+    >>> initial_brackets([False] * 6, values)
+    (None, None)
+    >>> initial_brackets([True] * 6, values)
+    (None, None)
     """
     idx = [i for i, s in enumerate(survival) if s]
     if not idx:
@@ -584,6 +878,51 @@ def update_bracket(bracket, midpoint: float, alive: bool, edge: str):
     so a surviving midpoint tightens the *alive* end in both cases -- which is
     opposite ends of the tuple. Keeping that asymmetry in ONE function is why
     this is shared rather than reimplemented per caller.
+
+    Parameters
+    ----------
+    bracket : tuple of float or None
+        The current bracket, or ``None`` (returned unchanged).
+    midpoint : float
+        The detuning just tested, in the same units as the bracket.
+    alive : bool
+        Whether a soliton survived there.
+    edge : {'lower', 'lo', 'upper', 'hi'}
+        Which edge is being bisected.
+
+    Returns
+    -------
+    tuple of float or None
+        The tightened bracket, or ``None`` if the input was ``None``.
+
+    Raises
+    ------
+    ValueError
+        If ``edge`` is not one of the four accepted spellings. Guessing would
+        silently bisect the wrong end.
+
+    Examples
+    --------
+    The lower bracket is ``(dead, alive)``, so a surviving midpoint tightens
+    its RIGHT end:
+
+    >>> update_bracket((2.0, 3.0), 2.5, alive=True, edge="lower")
+    (2.0, 2.5)
+    >>> update_bracket((2.0, 3.0), 2.5, alive=False, edge="lower")
+    (2.5, 3.0)
+
+    The upper bracket is ``(alive, dead)``, so the same survival tightens its
+    LEFT end:
+
+    >>> update_bracket((5.0, 6.0), 5.5, alive=True, edge="upper")
+    (5.5, 6.0)
+    >>> update_bracket((5.0, 6.0), 5.5, alive=False, edge="upper")
+    (5.0, 5.5)
+
+    >>> update_bracket((1.0, 2.0), 1.5, True, "sideways")
+    Traceback (most recent call last):
+        ...
+    ValueError: edge must be lower/upper, got 'sideways'
     """
     if bracket is None:
         return None
@@ -595,10 +934,70 @@ def update_bracket(bracket, midpoint: float, alive: bool, edge: str):
 
 
 def bracket_midpoint(bracket):
+    """Return the midpoint of a bracket, or ``None`` for a missing one.
+
+    Parameters
+    ----------
+    bracket : sequence of float or None
+        A two-element bracket, in whatever units the caller works in.
+
+    Returns
+    -------
+    float or None
+        ``0.5*(lo + hi)``, or ``None`` when ``bracket`` is ``None``.
+
+    Raises
+    ------
+    IndexError
+        If ``bracket`` has fewer than two elements.
+
+    Notes
+    -----
+    The midpoint is the reported EDGE ESTIMATE, and
+    :func:`bracket_halfwidth` is its uncertainty. Reporting the tightest
+    surviving point instead would be a biased estimator -- see criterion G7.
+
+    Examples
+    --------
+    >>> bracket_midpoint((2.0, 3.0))
+    2.5
+    >>> bracket_midpoint(None) is None
+    True
+    """
     return None if bracket is None else 0.5 * (bracket[0] + bracket[1])
 
 
 def bracket_halfwidth(bracket):
+    """Return the half-width of a bracket, or ``None`` for a missing one.
+
+    Parameters
+    ----------
+    bracket : sequence of float or None
+        A two-element bracket, in whatever units the caller works in.
+
+    Returns
+    -------
+    float or None
+        ``0.5*|hi - lo|``, or ``None`` when ``bracket`` is ``None``.
+
+    Raises
+    ------
+    IndexError
+        If ``bracket`` has fewer than two elements.
+
+    Notes
+    -----
+    This is the resolution the bisection actually achieved, and it floors every
+    uncertainty claim about the edge: no analysis downstream may report the
+    edge more precisely than this.
+
+    Examples
+    --------
+    >>> bracket_halfwidth((2.0, 3.0))
+    0.5
+    >>> bracket_halfwidth(None) is None
+    True
+    """
     return None if bracket is None else 0.5 * abs(bracket[1] - bracket[0])
 
 
@@ -614,7 +1013,44 @@ def _brackets_overlap(a, b) -> bool:
 
 def dw_phase_matching_roots(mu: np.ndarray, d_int_nat: np.ndarray,
                             dw_final: float) -> list:
-    """Modes where D_int(mu) = delta_omega -- where a dispersive wave is expected."""
+    """Find the modes where a dispersive wave is phase-matched.
+
+    Parameters
+    ----------
+    mu : numpy.ndarray
+        Mode numbers [dimensionless], mu-centred.
+    d_int_nat : numpy.ndarray
+        ``D_int(mu)`` [rad/s], same shape and ordering.
+    dw_final : float
+        Detuning at the operating point [rad/s].
+
+    Returns
+    -------
+    list of int
+        Mode numbers where ``D_int(mu) - delta_omega`` changes sign.
+
+    Raises
+    ------
+    IndexError
+        If ``mu`` and ``d_int_nat`` have different lengths.
+
+    Notes
+    -----
+    ``D_int(mu) = delta_omega`` is the phase-matching condition for a
+    dispersive wave. Computing it from the dispersion ALONE, before looking at
+    any spectrum, is what makes a bump found there a confirmed prediction
+    rather than a feature noticed after the fact and explained afterwards.
+
+    Examples
+    --------
+    A parabolic ``D_int`` crosses a positive detuning at two symmetric pairs of
+    adjacent modes:
+
+    >>> import numpy as np
+    >>> mu = np.arange(-100, 101)
+    >>> dw_phase_matching_roots(mu, 0.5 * mu ** 2, 200.0)
+    [-21, -20, 19, 20]
+    """
     s = np.sign(d_int_nat - dw_final)
     return [int(mu[i]) for i in np.flatnonzero(np.diff(s) != 0)]
 
@@ -625,11 +1061,61 @@ def dw_phase_matching_roots(mu: np.ndarray, d_int_nat: np.ndarray,
 def make_figure(path: Path, *, mu, dbc_ours_fine, dbc_pylle_fine, bands,
                 d_int_nat, t_r, ladders, containment, existence, mu_half,
                 spec_contain, ours_label, pylle_label) -> str:
-    """Four panels (R: EXPECTED ARTIFACTS). Generated IN-RUN; sha256 returned.
+    """Draw the four-panel comparison figure in-run and return its hash.
 
-    v1's figure was regenerated after the run from the saved npz with edited
-    rendering code. This one is written by the same process that produced the
-    numbers, and its hash is recorded in the JSON.
+    Parameters
+    ----------
+    path : pathlib.Path
+        Destination image.
+    mu : numpy.ndarray
+        Mode numbers [dimensionless]. Keyword-only.
+    dbc_ours_fine, dbc_pylle_fine : numpy.ndarray
+        Per-mode spectra [dBc] at the finest level of each ladder.
+        Keyword-only.
+    bands : list of dict
+        The band-residual table from :func:`band_residual_table`. Keyword-only.
+    d_int_nat : numpy.ndarray
+        ``D_int(mu)`` [rad/s], mu-centred. Keyword-only.
+    t_r : float
+        Round-trip time [s]. Keyword-only.
+    ladders : dict
+        Both refinement ladders, for the convergence panel. Keyword-only.
+    containment : dict
+        Per-observable containment verdicts from :func:`containment_verdict`.
+        Keyword-only.
+    existence : dict
+        The existence-edge brackets [units of kappa]. Keyword-only.
+    mu_half : int
+        Half-width of the mode grid [mode number]. Keyword-only.
+    spec_contain : dict
+        The result of :func:`spectral_containment`. Keyword-only.
+    ours_label, pylle_label : str
+        Legend labels naming each code and its refinement level. Keyword-only.
+
+    Returns
+    -------
+    str
+        ``sha256`` of the written image, recorded in the report JSON.
+
+    Raises
+    ------
+    OSError
+        If ``path`` cannot be written.
+    ImportError
+        If matplotlib is unavailable.
+
+    Notes
+    -----
+    Generated IN-RUN and hashed. The v1 figure was regenerated after the fact
+    from the saved archive with edited rendering code, which means the figure a
+    reader saw was not provably the figure the numbers came from. This one is
+    written by the same process that produced them, and its hash goes into the
+    JSON, so the two cannot drift apart unnoticed.
+
+    Uses the ``Agg`` backend explicitly so the figure renders identically
+    headless.
+
+    No ``Examples`` section: it needs both completed ladders and writes a file.
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -780,6 +1266,47 @@ def make_figure(path: Path, *, mu, dbc_ours_fine, dbc_pylle_fine, bands,
 # orchestration
 # ==========================================================================
 def main(argv: list[str] | None = None) -> int:
+    """Run the v2 pyLLE cross-check from the command line.
+
+    Parameters
+    ----------
+    argv : list of str or None, optional
+        Command-line arguments; ``None`` (default) reads ``sys.argv[1:]``.
+        ``--pylle-python`` and ``--julia-bin`` locate the reference
+        environment and default to the ``PYLLE_PYTHON`` and ``JULIA_BIN``
+        environment variables.
+
+    Returns
+    -------
+    int
+        The process exit status: 0 when the assembled report's ``overall`` is
+        ``PASS``, non-zero otherwise.
+
+    Raises
+    ------
+    SystemExit
+        From ``argparse`` on a malformed command line or ``--help``.
+    CriteriaError
+        From :mod:`validation.criteria` if a tolerance changed between
+        derivation and evaluation, or the report fails its own schema.
+    FileNotFoundError
+        If the reference interpreter, the Julia binary or the dispersion CSV
+        cannot be found.
+
+    Notes
+    -----
+    Tolerances are DERIVED first, from the two measured uncertainty studies,
+    and fingerprinted before any comparison value is read; the report cannot be
+    built if one moved afterwards. The reference code runs out of process under
+    its own interpreter, which pins ``numpy < 2`` and needs a Julia toolchain.
+
+    Writes ``validation/results/pylle_crosscheck_v2.json``, its fields archive
+    and the in-run figure. This cross-check is FROZEN: re-running it is one of
+    the five named triggers in ``docs/VALIDATION_STATUS.md`` section 5, not
+    routine maintenance.
+
+    No ``Examples`` section: it requires a provisioned pyLLE environment.
+    """
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--pylle-python", default=os.environ.get("PYLLE_PYTHON"))
@@ -1607,11 +2134,75 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _br_str(br, kappa: float) -> str:
+    """Format a bracket in units of kappa, or a dash when it is missing.
+
+    Parameters
+    ----------
+    br : sequence of float or None
+        A two-element bracket [rad/s].
+    kappa : float
+        Total loss rate [rad/s], the unit the bracket is reported in.
+
+    Returns
+    -------
+    str
+        ``"[lo,hi]"`` in units of kappa to four decimals, or ``"-"``.
+
+    Raises
+    ------
+    ZeroDivisionError
+        If ``kappa`` is zero.
+
+    Examples
+    --------
+    >>> _br_str((3.0e8, 4.5e8), kappa=1.5e8)
+    '[2.0000,3.0000]'
+    >>> _br_str(None, kappa=1.5e8)
+    '-'
+    """
     return "-" if br is None else f"[{br[0] / kappa:.4f},{br[1] / kappa:.4f}]"
 
 
 def _print_report(report, containment, containment_shipped, lad_o, lad_p,
                   existence, spec_contain, picard_test) -> None:
+    """Print the full v2 comparison report to stdout.
+
+    Parameters
+    ----------
+    report : dict
+        The assembled report from :mod:`validation.criteria`.
+    containment : dict
+        Per-observable containment verdicts at the TIGHT solver settings.
+    containment_shipped : dict
+        The same at the SHIPPED settings, so the two can be read side by side.
+    lad_o, lad_p : dict
+        Each code's refinement ladder.
+    existence : dict
+        The existence-edge brackets [units of kappa].
+    spec_contain : dict
+        The result of :func:`spectral_containment`.
+    picard_test : dict
+        The reference code's Picard-tolerance sensitivity check.
+
+    Returns
+    -------
+    None
+        Writes to stdout.
+
+    Raises
+    ------
+    KeyError
+        If any input is missing a field the report displays.
+
+    Notes
+    -----
+    Both the shipped and the tight settings are printed, deliberately: a
+    verdict that holds only at one of them is a different claim from one that
+    holds at both, and collapsing them to a single column would hide which is
+    which.
+
+    No ``Examples`` section: it prints a wide multi-section report.
+    """
     sep = [k for k, v in containment.items() if v["verdict"] == "SEPARATED"]
     print("\n" + "=" * 104)
     if sep:

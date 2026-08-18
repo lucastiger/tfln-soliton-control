@@ -1,8 +1,39 @@
-"""JAX-based LLE + thermal ODE solver module.
+"""JAX split-step solver for the generalized Lugiato--Lefever equation.
 
-This module implements a GPU-accelerated split-step Fourier method (SSFM)
-solver for the generalized Lugiato–Lefever Equation (LLE), including a
-https://github.com/lucastiger/soliton-control/edit/main/simulator/lle_solver.pysingle-pole thermal model for thermo-optic detuning drift.
+Implements a GPU-capable split-step Fourier (SSFM) integrator for the
+generalized Lugiato--Lefever equation (LLE) coupled to a single-pole thermal
+model for thermo-optic detuning drift, plus the unit conversions that map
+published microresonator quantities onto this solver's normalization.
+
+Normalization
+-------------
+The intracavity field E is in sqrt(J), so ``|E|**2`` is in joules and the
+intracavity energy is ``U_int = sum |E|**2 * (t_r/n_tau)`` [J*s], with the
+circulating power recovered as ``E_total = U_int/t_r`` [W]. Consequently
+``gamma_LLE`` is in J^-1 s^-1 (not the fiber-optics W^-1 m^-1) and the
+dispersion coefficients ``beta_k = D_k/D_1**k`` are in s^(k-1) (not fiber GVD
+in s**2/m). :func:`gamma_nlse_to_lle`, :func:`d2_to_beta2_lle` and
+:func:`d3_to_beta3_lle` perform those conversions.
+
+Sign convention
+---------------
+``delta_omega = omega_res - omega_pump`` -- cavity minus pump -- matching the
+implemented term ``-1j*delta_omega*E``. Positive ``delta_omega`` is a
+red-detuned pump (pump below resonance), which is the soliton side. See
+:func:`solve_lle_ssfm_jax` for the full discussion; every noise channel that
+enters as a detuning follows the same convention.
+
+Precision
+---------
+64-bit JAX is enabled process-wide at import (see the guarded
+``jax.config.update`` below). JAX bakes that flag in at ARRAY-CREATION time, so
+this module must be imported before any ``jax.numpy`` array is built. In
+complex64 the accumulated round-off over hundreds of thousands of round trips
+pins the spectral floor near -70 dB and buries the sub--70 dB structure --
+dispersive waves in particular -- that this benchmark exists to resolve.
+
+Reference: Herr, Tikan & Kippenberg, arXiv:2604.05897v1 (7 Apr 2026). The
+version pin matters: equation and section numbers cited here are v1 numbers.
 """
 
 from __future__ import annotations
@@ -210,15 +241,49 @@ _HBAR_J_S = 1.054571817e-34
 
 
 def hbar_omega0_from_config(physical: dict[str, Any]) -> float:
-    """ħω₀ [J] at the pump: config override ``hbar_omega0_j`` if > 0, else ħ·2πc/λ_p.
+    """Resolve the photon energy at the pump.
 
-    ω₀ = 2πc/pump_wavelength_m (1.21526e15 rad/s at λ_p = 1.55 µm, so
-    ħω₀ = 1.2816e-19 J). Using the PUMP-mode ħω₀ for every comb mode
-    over-/under-counts the photon energy of mode μ by |μ|·FSR/f₀ — <1% across
-    the comb span here — which is the documented approximation of the
-    quantum-noise normalization. ``hbar_omega0_j`` <= 0 (the config encodes
-    "auto" as 0 because physical_parameters leaves must stay numeric) or a
-    missing key both mean "compute from the pump wavelength".
+    Parameters
+    ----------
+    physical : dict
+        The ``physical_parameters`` mapping. Reads ``hbar_omega0_j`` [J] as an
+        optional override and ``pump_wavelength_m`` [m, default 1.55e-6].
+
+    Returns
+    -------
+    float
+        ``hbar*omega0`` [J]: the override when it is strictly positive,
+        otherwise ``hbar*2*pi*c/lambda_p``.
+
+    Raises
+    ------
+    TypeError
+        If either key holds a value ``float()`` cannot convert.
+
+    Notes
+    -----
+    ``omega0 = 2*pi*c/pump_wavelength_m`` is 1.21526e15 rad/s at
+    ``lambda_p = 1.55 um``, giving ``hbar*omega0 = 1.2816e-19 J``.
+
+    Using the PUMP-mode ``hbar*omega0`` for EVERY comb mode over- or
+    under-counts the photon energy of mode mu by ``|mu|*FSR/f0`` -- below 1%
+    across the comb span used here. That is the documented approximation of the
+    quantum-noise normalization (arXiv:2604.05897v1 Sec. V.B.2), stated rather
+    than hidden.
+
+    A value of ``hbar_omega0_j <= 0`` and a missing key both mean "compute from
+    the pump wavelength". The config spells "auto" as ``0`` because every leaf
+    under ``physical_parameters`` must parse as a plain number.
+
+    Examples
+    --------
+    >>> print(f"{hbar_omega0_from_config({}):.4e} J")     # default 1.55 um
+    1.2816e-19 J
+    >>> hbar_omega0_from_config({"hbar_omega0_j": 1.3e-19})
+    1.3e-19
+    >>> hbar_omega0_from_config({"hbar_omega0_j": 0.0}) == (
+    ...     hbar_omega0_from_config({}))                  # 0 means "auto"
+    True
     """
     override = float(physical.get("hbar_omega0_j", 0.0) or 0.0)
     if override > 0.0:
@@ -228,43 +293,161 @@ def hbar_omega0_from_config(physical: dict[str, Any]) -> float:
 
 
 def gamma_nlse_to_lle(gamma_nlse_per_w_per_m: float, fsr_hz: float, n_eff: float = 2.2) -> float:
-    """Convert γ_NLSE [W⁻¹m⁻¹] to γ_LLE [J⁻¹s⁻¹].
+    """Convert a published NLSE nonlinear coefficient to this solver's units.
 
-    Derivation: equating NLSE and LLE nonlinear phases,
-        γ_NLSE · P · L_RT  =  γ_LLE · U_int · t_r
-        γ_NLSE · (U/t_r) · v_g·t_r  =  γ_LLE · U · t_r
-        γ_LLE  =  γ_NLSE · v_g / t_r  =  γ_NLSE · v_g · FSR
+    Parameters
+    ----------
+    gamma_nlse_per_w_per_m : float
+        Nonlinear coefficient as published for fiber/waveguide NLSE work,
+        [W^-1 m^-1].
+    fsr_hz : float
+        Free spectral range [Hz]; equivalently ``1/t_r``.
+    n_eff : float, optional
+        Effective group index [dimensionless], default 2.2, used only to obtain
+        the group velocity ``v_g = c/n_eff``.
 
-    Units check: [W⁻¹m⁻¹] · [m/s] · [1/s] = W⁻¹s⁻²
-                 = (J/s)⁻¹ · s⁻¹ = J⁻¹s⁻¹  ✓
+    Returns
+    -------
+    float
+        ``gamma_LLE`` [J^-1 s^-1], directly usable as the config key
+        ``gamma_LLE_per_J_per_s``.
+
+    Raises
+    ------
+    ZeroDivisionError
+        If ``n_eff`` is zero.
+    TypeError
+        If any argument is not a number.
+
+    Notes
+    -----
+    Equating the NLSE and LLE nonlinear phases accumulated in one round trip::
+
+        gamma_NLSE * P * L_RT       = gamma_LLE * U_int * t_r
+        gamma_NLSE * (U/t_r) * v_g*t_r = gamma_LLE * U * t_r
+        gamma_LLE = gamma_NLSE * v_g / t_r = gamma_NLSE * v_g * FSR
+
+    Dimensional check: ``[W^-1 m^-1] * [m/s] * [1/s] = W^-1 s^-2 =
+    (J/s)^-1 s^-1 = J^-1 s^-1``.
+
+    This conversion is the usual source of a several-orders-of-magnitude error
+    when a value is taken from a fiber-optics paper, which is why
+    :func:`solve_lle_ssfm_jax` asserts that the configured ``gamma_LLE`` lies in
+    ``(1e15, 1e25)`` and names this function in the failure message.
+
+    Examples
+    --------
+    >>> print(f"{gamma_nlse_to_lle(1.0, 2.0e11):.4e}")     # J^-1 s^-1
+    2.7254e+19
+    >>> print(f"{gamma_nlse_to_lle(2.5, 24.6e9):.4e}")     # 24.6 GHz FSR
+    8.3806e+18
+
+    Linear in both the coefficient and the FSR:
+
+    >>> gamma_nlse_to_lle(2.0, 2.0e11) == 2 * gamma_nlse_to_lle(1.0, 2.0e11)
+    True
     """
     c   = 299_792_458.0
     v_g = c / n_eff
     return gamma_nlse_per_w_per_m * v_g * fsr_hz   # J⁻¹s⁻¹
 
 def d2_to_beta2_lle(d2_rad_per_s2: float, fsr_hz: float) -> float:
-    """Convert integrated dispersion D2 [rad/s²] to LLE beta_2 [s].
+    """Convert integrated dispersion D2 to the LLE second-order coefficient.
 
+    Parameters
+    ----------
+    d2_rad_per_s2 : float
+        Second-order integrated dispersion ``D_2`` [rad/s**2].
+    fsr_hz : float
+        Free spectral range [Hz]; ``D_1 = 2*pi*FSR`` [rad/s].
+
+    Returns
+    -------
+    float
+        ``beta_2 = D_2 / D_1**2`` [s], the first element of the ``beta`` list
+        :func:`solve_lle_ssfm_jax` takes.
+
+    Raises
+    ------
+    ZeroDivisionError
+        If ``fsr_hz`` is zero.
+    TypeError
+        If either argument is not a number.
+
+    Notes
+    -----
     In the microresonator LLE the dispersion polynomial is parameterised by the
-    integrated dispersion coefficients Dₖ (rad/s^k).  The mapping to the LLE
-    β coefficients (units: s^(k-1)) is:
+    integrated dispersion coefficients ``D_k`` [rad/s**k]. The mapping to the
+    LLE coefficients [s**(k-1)] is
 
-        β₂ = D₂ / D₁²     (s)
-        β₃ = D₃ / D₁³     (s²)
+        beta_2 = D_2 / D_1**2   [s],
+        beta_3 = D_3 / D_1**3   [s**2],
 
-    where D₁ = 2π·FSR.
+    with ``D_1 = 2*pi*FSR``. These are NOT fiber GVD coefficients (which carry
+    s**2/m); mixing the two conventions is the second classic unit trap in this
+    solver, after ``gamma``.
 
-    Sign convention: D₂ > 0  →  β₂ > 0  →  anomalous dispersion.
+    SIGN CONVENTION: ``D_2 > 0`` gives ``beta_2 > 0``, which is ANOMALOUS
+    dispersion -- the regime bright dissipative Kerr solitons need.
 
-    Example (TFLN, 200 GHz FSR, D₂ = 2π × 2 MHz):
-        d2_to_beta2_lle(1.2566e7, 2e11) ≈ 7.9e-18  s
+    Examples
+    --------
+    TFLN at 200 GHz FSR with ``D_2 = 2*pi * 2 MHz``:
+
+    >>> print(f"{d2_to_beta2_lle(1.2566e7, 2.0e11):.4e} s")
+    7.9575e-18 s
+
+    Anomalous dispersion keeps its sign through the conversion:
+
+    >>> d2_to_beta2_lle(-1.2566e7, 2.0e11) < 0
+    True
     """
     d1 = 2.0 * math.pi * fsr_hz          # rad/s
     return d2_rad_per_s2 / d1 ** 2
 
 
 def d3_to_beta3_lle(d3_rad_per_s3: float, fsr_hz: float) -> float:
-    """Convert D3 [rad/s³] to LLE beta_3 [s²].  See d2_to_beta2_lle."""
+    """Convert integrated dispersion D3 to the LLE third-order coefficient.
+
+    Parameters
+    ----------
+    d3_rad_per_s3 : float
+        Third-order integrated dispersion ``D_3`` [rad/s**3].
+    fsr_hz : float
+        Free spectral range [Hz]; ``D_1 = 2*pi*FSR`` [rad/s].
+
+    Returns
+    -------
+    float
+        ``beta_3 = D_3 / D_1**3`` [s**2], the second element of the ``beta``
+        list :func:`solve_lle_ssfm_jax` takes.
+
+    Raises
+    ------
+    ZeroDivisionError
+        If ``fsr_hz`` is zero.
+    TypeError
+        If either argument is not a number.
+
+    Notes
+    -----
+    The third-order companion of :func:`d2_to_beta2_lle`; see that function for
+    the full convention. Third-order dispersion is what breaks the spectrum's
+    symmetry about the pump and phase-matches the dispersive wave, so its sign
+    decides which side of the comb the wave appears on.
+
+    Examples
+    --------
+    >>> print(f"{d3_to_beta3_lle(1.0e5, 2.0e11):.4e} s^2")
+    5.0393e-32 s^2
+
+    Third order scales as ``D_1**-3``, so halving the FSR multiplies beta_3 by
+    eight:
+
+    >>> ratio = d3_to_beta3_lle(1.0e5, 1.0e11) / d3_to_beta3_lle(1.0e5, 2.0e11)
+    >>> print(f"{ratio:.1f}")
+    8.0
+    """
     d1 = 2.0 * math.pi * fsr_hz
     return d3_rad_per_s3 / d1 ** 3
 
@@ -327,17 +510,83 @@ def _load_config(config_path: str | Path | None = None) -> dict[str, Any]:
     return cfg.get("physical_parameters", {})
 
 
-def resolve_cavity_rates(config_path=None):
-    """Resolve (kappa_i, kappa_c, kappa_total) in rad/s from config — single source of truth.
+def resolve_cavity_rates(config_path: str | Path | None = None) -> tuple[float, float, float]:
+    """Resolve the cavity loss rates from config -- the single source of truth.
 
-    kappa_i: prefer explicit `kappa_i_rad_per_s`; else omega0 / intrinsic_q.
-    kappa_c: prefer explicit `kappa_c_rad_per_s`; else omega0 / coupling_q;
-             else fall back to kappa_i (critical coupling) and warn.
-    kappa_total = kappa_i + kappa_c.
-    omega0 = 2*pi*c / pump_wavelength_m.
-    Mirror the existing kappa_i/Q_i consistency check (lle_solver.py ~l.320-337):
-    if an explicit kappa_c_rad_per_s is present AND coupling_q is present, warn when they
-    disagree by >15%. Same for kappa_i vs intrinsic_q. Returns floats.
+    Parameters
+    ----------
+    config_path : str or pathlib.Path or None, optional
+        YAML config to read. ``None`` (default) uses
+        ``config/sin_params.yaml`` next to the repository root.
+
+    Returns
+    -------
+    kappa_i : float
+        Intrinsic loss rate [rad/s].
+    kappa_c : float
+        External coupling rate [rad/s].
+    kappa_total : float
+        ``kappa_i + kappa_c`` [rad/s]. This is the ``kappa`` that
+        :func:`solve_lle_ssfm_jax` takes, and the ``kappa`` in the CW response
+        ``(kappa/2)**2 + delta_omega**2``.
+
+    Raises
+    ------
+    ValueError
+        If neither ``kappa_i_rad_per_s`` nor a positive ``intrinsic_q`` is
+        present -- the intrinsic loss cannot be invented.
+    OSError
+        If ``config_path`` cannot be read.
+
+    Warns
+    -----
+    UserWarning
+        If an explicit rate and its quality factor disagree by more than 15%,
+        naming both values and the reconciliation; or if neither
+        ``kappa_c_rad_per_s`` nor ``coupling_q`` is present, in which case
+        critical coupling ``kappa_c = kappa_i`` is assumed.
+
+    Notes
+    -----
+    Resolution order, with ``omega0 = 2*pi*c/pump_wavelength_m``:
+
+    * ``kappa_i`` -- prefer explicit ``kappa_i_rad_per_s``, else
+      ``omega0/intrinsic_q``;
+    * ``kappa_c`` -- prefer explicit ``kappa_c_rad_per_s``, else
+      ``omega0/coupling_q``, else fall back to ``kappa_i`` (critical coupling)
+      and warn.
+
+    A config may legitimately carry both a rate and a Q, so neither spelling is
+    rejected; but a silent disagreement between them would put one number in the
+    linewidth and a different one in a reported Q, so the 15% consistency check
+    warns rather than picking a winner quietly.
+
+    Every caller goes through this function so that "what was kappa?" has ONE
+    answer per config -- the alternative, each script re-deriving it from
+    whichever key it happened to look for, is how two figures in one paper end
+    up with different linewidths.
+
+    Examples
+    --------
+    >>> import pathlib, tempfile
+    >>> cfg = pathlib.Path(tempfile.mkdtemp()) / "cfg.yaml"
+    >>> _ = cfg.write_text(chr(10).join([
+    ...     "physical_parameters:",
+    ...     "  pump_wavelength_m: 1.55e-6",
+    ...     "  kappa_i_rad_per_s: 3.0e7",
+    ...     "  kappa_c_rad_per_s: 1.2e8"]))
+    >>> resolve_cavity_rates(cfg)
+    (30000000.0, 120000000.0, 150000000.0)
+
+    An unresolvable intrinsic loss is an error, never a default:
+
+    >>> bare = pathlib.Path(tempfile.mkdtemp()) / "cfg.yaml"
+    >>> _ = bare.write_text(chr(10).join([
+    ...     "physical_parameters:", "  pump_wavelength_m: 1.55e-6"]))
+    >>> resolve_cavity_rates(bare)
+    Traceback (most recent call last):
+        ...
+    ValueError: Cannot resolve kappa_i: config has neither kappa_i_rad_per_s nor intrinsic_q.
     """
     import warnings as _warnings
 
@@ -419,11 +668,63 @@ def _build_omega_grid(n_tau: int, t_r: float) -> jnp.ndarray:
 
 
 def build_dispersion(omega: jnp.ndarray, beta_list: tuple[float, ...]) -> jnp.ndarray:
-    """Build dispersion polynomial.
+    """Evaluate the Taylor dispersion polynomial on the frequency grid.
 
-    beta_list[0] is beta_2 (s), beta_list[1] is beta_3 (s^2), etc.
-    (LLE convention beta_k = D_k / D_1^k; NOT fiber GVD s^2/m.)
-    The k=0 and k=1 terms are zero by definition in the co-moving frame and must not be included.
+    Parameters
+    ----------
+    omega : jax.Array
+        Angular-frequency offset from the pump [rad/s], shape ``(n_tau,)``, in
+        FFT-bin order as built by ``_build_omega_grid``.
+    beta_list : tuple of float
+        Dispersion coefficients starting at SECOND order: ``beta_list[0]`` is
+        ``beta_2`` [s], ``beta_list[1]`` is ``beta_3`` [s**2], and so on, in the
+        LLE convention ``beta_k = D_k/D_1**k``. At least one entry is required.
+
+    Returns
+    -------
+    jax.Array
+        ``D_int(omega)`` [rad/s], shape ``(n_tau,)``, ready to enter the linear
+        operator as ``exp(-1j*disp*dt)``.
+
+    Raises
+    ------
+    AssertionError
+        If ``beta_list`` is empty -- ``beta_2`` is the minimum a dispersive LLE
+        needs.
+
+    Notes
+    -----
+    Every order enters with ``+beta_k/k!``:
+
+        D_int = (1/2)*beta_2*omega**2 + (1/6)*beta_3*omega**3 + ...
+
+    which is the Taylor form of the integrated dispersion
+    ``D_int(mu) = (1/2)*D_2*mu**2 + (1/6)*D_3*mu**3 + ...`` written on the
+    frequency grid rather than the mode index.
+
+    The ``k = 0`` and ``k = 1`` terms are zero BY DEFINITION in the co-moving
+    frame -- a constant is absorbed into the detuning and a linear term into the
+    frame velocity -- so ``beta_list`` must not include them. Passing a
+    ``beta_1`` as ``beta_list[0]`` silently re-tilts the whole comb.
+
+    For a MEASURED dispersion profile, bypass this function entirely and pass
+    :func:`load_dint_grid`'s array as ``d_int_grid``: the Taylor truncation is
+    only as good as its order, and the pyLLE cross-check is run against the
+    measured grid.
+
+    Examples
+    --------
+    >>> import jax.numpy as jnp
+    >>> omega = jnp.asarray([0.0, 1e9, -1e9])
+    >>> import numpy as np
+    >>> np.asarray(build_dispersion(omega, (1e-18,)))   # beta_2 only: even
+    array([0. , 0.5, 0.5])
+
+    Adding beta_3 breaks the symmetry between the two sidebands, which is what
+    phase-matches a dispersive wave on one side only:
+
+    >>> np.asarray(build_dispersion(omega, (1e-18, 1e-30)))
+    array([0.        , 0.50016667, 0.49983333])
     """
     assert len(beta_list) >= 1, "Must provide at least beta_2"
     disp = jnp.zeros_like(omega)
@@ -446,16 +747,43 @@ _DINT_GRID_CACHE: dict[tuple[int, str], "DintGrid"] = {}
 class DintGrid(NamedTuple):
     """Measured integrated-dispersion grid returned by :func:`load_dint_grid`.
 
-    Attributes:
-        grid: D_int(mu) [rad/s], shape (n_tau,), in FFT-bin order (NOT fftshifted),
-            jnp float64 — ready to drop into the linear operator as ``disp``.
-        d1:  Measured D1 = 2π·FSR [rad/s] from a smooth-trend fit, excluding the
-            5 < |mu| region around a known pump-neighborhood defect (a plain
-            central difference at mu=0 is biased +2π·3.35 MHz by that defect),
-            so callers can reconcile the FSR / round-trip time.
+    Parameters
+    ----------
+    grid : jax.Array
+        ``D_int(mu)`` [rad/s], shape ``(n_tau,)``, dtype ``float64``, in FFT-bin
+        order (NOT fftshifted) -- ready to drop into the linear operator as
+        ``disp``.
+    d1 : float
+        Measured ``D_1 = 2*pi*FSR`` [rad/s], from a smooth-trend fit of the
+        resonance frequencies.
 
-    A ``NamedTuple`` so it is importable, picklable, and supports both attribute
-    access (``res.grid``) and tuple unpacking (``grid, d1 = res``).
+    Raises
+    ------
+    TypeError
+        From ``NamedTuple`` construction if either field is missing.
+
+    Notes
+    -----
+    ``d1`` is fitted rather than differenced. A plain three-point central
+    difference at ``mu = 0`` is biased by ``+2*pi*3.35 MHz`` by a localized
+    pump-neighborhood defect in the measured profile, so the fit excludes
+    ``|mu| <= 5``. That bias is provably harmless for mode POWERS -- it tilts
+    ``D_int`` linearly in ``mu``, which is a pure frame drift -- but it corrupts
+    every crossing and dispersive-wave readout, which is exactly what the
+    benchmark measures.
+
+    A ``NamedTuple`` so the result is importable, picklable, and usable both by
+    attribute (``res.grid``) and by unpacking (``grid, d1 = res``).
+
+    Examples
+    --------
+    >>> import jax.numpy as jnp
+    >>> res = DintGrid(grid=jnp.zeros(4), d1=1.5e11)
+    >>> res.d1
+    150000000000.0
+    >>> grid, d1 = res
+    >>> grid.shape
+    (4,)
     """
 
     grid: jnp.ndarray
@@ -478,31 +806,84 @@ class DintGrid(NamedTuple):
 #         --julia-bin    ./pylle-env/bin/julia
 # -------------------------------------------------------------------------
 def load_dint_grid(n_tau, csv_path=None, config_path=None) -> "DintGrid":
-    """Return D_int(mu) [rad/s], shape (n_tau,), in FFT-bin order (NOT fftshifted),
-    ready to drop into the linear operator as ``disp``.
+    """Build the measured integrated-dispersion grid for an FFT of size ``n_tau``.
 
-    - Default csv_path = config/pyLLE_dispersion_w4400_h800.csv.
-    - Load (mu, f_hz). Compute omega = 2*pi*f. Locate mu==0 -> omega0.
-    - D1 = smooth-trend fit of omega, excluding the 5 < |mu| region around a
-      known pump-neighborhood defect (rad/s). Returned too (as the ``d1``
-      attribute of the DintGrid result) so callers can reconcile FSR.
-    - D_int(mu) = omega - omega0 - D1*mu.
-    - Build the integer FFT mode grid: k = np.round(np.fft.fftfreq(n_tau,
-      d=t_r/n_tau) / fsr).astype(int), where fsr = D1/(2*pi) and t_r = 1/fsr.
-      (This yields the same bin ordering as _build_omega_grid, so disp aligns
-      with the existing FFT convention.)
-    - D_int_grid = np.interp(k, mu_csv, D_int_csv). Assert the mu=0 bin is 0.
-    - D_int_grid is returned as a jnp float64 array (complex-compatible for the
-      -1j*disp linear-operator term).
+    Parameters
+    ----------
+    n_tau : int
+        Number of fast-time / FFT grid points.
+    csv_path : str or pathlib.Path or None, optional
+        Two-column CSV without header: mode number ``mu`` [dimensionless
+        integer] and resonance frequency ``f`` [Hz]. ``None`` (default) uses
+        ``config/pyLLE_dispersion_w4400_h800.csv``.
+    config_path : str or pathlib.Path or None, optional
+        Accepted for API symmetry with the rest of the solver and currently
+        UNUSED: the dispersion source is the CSV, not the YAML.
 
-    Args:
-        n_tau: Number of fast-time / FFT grid points.
-        csv_path: Optional path to the (mu, f_hz) CSV. Defaults to the pyLLE grid.
-        config_path: Accepted for API symmetry with the rest of the solver; the
-            dispersion source is the CSV, so this argument is currently unused.
+    Returns
+    -------
+    DintGrid
+        ``grid`` is ``D_int(mu)`` [rad/s], shape ``(n_tau,)``, dtype
+        ``float64``, in FFT-bin order (NOT fftshifted); ``d1`` is the fitted
+        ``D_1 = 2*pi*FSR`` [rad/s], returned so callers can reconcile the FSR
+        and the round-trip time against the config.
 
-    Returns:
-        DintGrid(grid, d1) — see :class:`DintGrid`.
+    Raises
+    ------
+    AssertionError
+        If the ``mu = 0`` FFT bin does not carry exactly ``D_int = 0``, which
+        would mean the mode-index origin and the FFT bin ordering had drifted
+        apart.
+    IndexError
+        If the CSV contains no ``mu = 0`` row.
+    OSError
+        If the CSV cannot be read.
+
+    Notes
+    -----
+    Procedure. Load ``(mu, f)``; form ``omega = 2*pi*f``; locate ``mu = 0`` to
+    get ``omega0``. Fit the smooth trend of ``omega(mu)`` over
+    ``5 < |mu| <= 600`` with a degree-7 polynomial and take ``D_1`` as its
+    derivative at 0, excluding a known pump-neighborhood defect (see
+    :class:`DintGrid`). Then ``D_int(mu) = omega - omega0 - D_1*mu``, evaluated
+    on the integer FFT mode grid ``k = round(fftfreq(n_tau, t_r/n_tau)/FSR)``
+    with ``FSR = D_1/(2*pi)`` and ``t_r = 1/FSR`` -- the same bin ordering as
+    ``_build_omega_grid``, so ``disp`` aligns with the solver's FFT convention.
+
+    Everything is done in float64 deliberately: ``omega`` is of order 1e15 rad/s
+    while ``D_int`` is 1e8 to 1e14 rad/s, so ``omega - omega0 - D_1*mu`` is a
+    catastrophic-cancellation subtraction that float32 cannot carry.
+
+    Beyond the tabulated span, ``D_int`` is continued LINEARLY at the boundary
+    slope rather than clamped flat. ``numpy.interp`` would hold the edge value
+    constant, injecting a slope discontinuity at the CSV edge -- a spurious kink
+    that seeds aliasing. A C1-continuous extension keeps the extrapolated edge
+    smooth so the solver's edge absorber can damp it cleanly.
+
+    Results are cached per ``(n_tau, resolved csv path)``, so repeated calls do
+    not re-read and re-interpolate the multi-thousand-row CSV.
+
+    VALIDATION RE-RUN TRIGGER: changing this loader is one of the five named
+    triggers that require the frozen pyLLE cross-check to be re-run. Both codes
+    are fed ONE dispersion array derived through here, so a change alters the
+    PROBLEM being solved rather than only the solver solving it. See
+    ``docs/VALIDATION_STATUS.md`` section 5.
+
+    Examples
+    --------
+    >>> res = load_dint_grid(512)
+    >>> print(res.grid.shape, res.grid.dtype)
+    (512,) float64
+    >>> float(res.grid[0])            # the mu = 0 bin is exactly zero
+    0.0
+    >>> print(f"{res.d1 / (2 * 3.141592653589793) / 1e9:.2f} GHz")
+    24.45 GHz
+
+    The result is a :class:`DintGrid`, so it unpacks as well:
+
+    >>> grid, d1 = load_dint_grid(512)
+    >>> grid.shape
+    (512,)
     """
     del config_path  # reserved for API symmetry; dispersion comes from the CSV
     csv_path = Path(csv_path) if csv_path is not None else _DEFAULT_DINT_CSV
@@ -1413,260 +1794,252 @@ def solve_lle_ssfm_jax(
 ) -> dict[str, np.ndarray]:
     """Batch-capable SSFM solver for the generalized LLE using JAX.
 
-    Detuning convention: delta_omega = omega_res - omega_pump  (cavity minus pump);
-      this matches the implemented dynamical term  -1j * delta_omega * E.
-      Positive delta_omega = red-detuned pump (pump below resonance) = soliton side.
-      Solitons exist for kappa/2 < delta_omega < ~5*kappa.
-      For adiabatic soliton access, sweep delta_omega from negative to positive
-      (blue-to-red pump scan).
+    Parameters
+    ----------
+    pin : float
+        Pump power in watts.
+    delta_omega : float or numpy.ndarray or jax.Array
+        Detuning sweep (omega_res - omega_pump) in rad/s, shape
+        (n_traj, t_slow). A scalar or 1-D (t_slow,) input is broadcast to a
+        single trajectory. delta_omega[traj, step] is the detuning per round trip.
+    t_slow : int
+        Number of round trips.
+        Dimensionless count; the total integrated time is ``t_slow*t_r`` [s].
+    beta : list of float or tuple of float or numpy.ndarray
+        Dispersion coefficient list [beta2, beta3, beta4].
+        Units s, s**2, s**3 for beta2, beta3, beta4 in the LLE convention
+        ``beta_k = D_k/D_1**k`` -- NOT fiber GVD in s**2/m; use
+        :func:`d2_to_beta2_lle` / :func:`d3_to_beta3_lle` to convert.
+    kappa : float
+        Total cavity loss rate (rad/s).
+    kappa_c : float
+        Coupling rate (rad/s).
+    rng_key : jax.Array
+        PRNG key for initial noise seeding.
+        Dimensionless.
+    n_tau : int, optional
+        Number of fast-time grid points.
+        Dimensionless count; the fast-time grid spans one round trip ``t_r``
+        [s] and resolves modes ``|mu| < n_tau/2``.
+    config_path : str or pathlib.Path or None, optional
+        Optional YAML config override.
+    l_eff : float, optional
+        Effective nonlinear interaction length.
+        ACCEPTED BUT UNUSED: the nonlinear kick applies
+        ``exp(1j*gamma*|E|**2*dt_sub)`` directly, so this argument does not
+        enter the dynamics. Kept for call-site compatibility.
+    snapshot_interval : int, optional
+        Round-trip interval for field snapshots and labels.
+        Round trips (dimensionless count).
+    e0_override : numpy.ndarray or jax.Array or None, optional
+        Optional warm-start intracavity field. ``None`` (default) =
+        cold start from the analytic CW state + seeding noise (the historical
+        behaviour). If given, it is the exact initial field E(tau) and NO
+        seeding noise is added, so it can inject an analytic soliton ansatz for
+        deterministic DKS access. Shape (n_tau,) is broadcast to every
+        trajectory; shape (n_traj, n_tau) supplies a per-trajectory warm start.
+    delta_t0_override : numpy.ndarray or jax.Array or float or None, optional
+        Optional warm-start thermal state DeltaT (K). ``None``
+        (default) = start cold (DeltaT=0). Scalar broadcasts to all
+        trajectories; shape (n_traj,) is per-trajectory.
+    d_int_grid : numpy.ndarray or jax.Array or None, optional
+        Optional per-mode integrated dispersion D_int(mu) [rad/s] in
+        FFT-bin order, shape (n_tau,). ``None`` (default) = build dispersion
+        from the Taylor ``beta`` list (historical behavior). When given it is
+        used verbatim as the linear-operator dispersion (broadcast across all
+        trajectories) and the Taylor path is bypassed; use
+        :func:`load_dint_grid` to build it from a measured dispersion CSV.
+    n_substeps : int, optional
+        Number of Strang split-step sub-steps per round trip
+        (positive int, default 1). Each sub-step integrates over
+        dt = t_r / n_substeps, shrinking the per-sub-step linear phase
+        |D_int·dt| so the split-step spurious-sideband instability (which
+        appears once |D_int·t_r| nears π at large |mu|) is pushed out of the
+        physical band. n_substeps=1 reproduces the legacy single-step solver
+        bit-for-bit. The pump drive is distributed across sub-steps so the
+        per-round-trip total is unchanged; detuning, thermal update, energy
+        balance, snapshots, and labels are computed once per round trip.
+    dealias_two_thirds : bool, optional
+        If True, zero the Fourier modes with |mu| > n_tau/3
+        after each nonlinear kick (standard 2/3 de-aliasing of the cubic
+        nonlinearity). Default False (bit-identical legacy behaviour).
+    edge_absorber : bool, optional
+        If True, multiply the field once per round trip by a
+        super-Gaussian in mode space that is ~1 across the interior and ramps
+        to strong attenuation over the outer ``edge_absorber_frac`` of |mu| on
+        each side, damping energy at the (partly extrapolated) grid edges.
+        Default False. Both toggles OFF reproduce the current solver exactly;
+        production physical runs should set both ON.
+    edge_absorber_frac : float, optional
+        Outer fraction of |mu| (each side) over which the
+        edge absorber ramps (default 0.12). At n_tau=8192 the onset is
+        |mu| ~ 3604 and at 16384 ~ 7209, both beyond the physical window
+        (|mu|<=2744) so the absorber never touches it.
+    dispersion_validity_mask : bool, optional
+        If True, smoothly damp (once per fine step)
+        the modes whose per-sub-step linear-phase MISMATCH
+        |D_int - delta_omega|*dt_sub exceeds ``validity_phase_threshold``.
+        The linear step applies the exact exponential, which is valid at any
+        phase, so a large |D_int*t_r| does NOT by itself invalidate the map
+        (an earlier |D_int*t_r|-keyed mask amputated real soliton-tail and
+        dispersive-wave spectrum). The only genuine discrete-map artifact is
+        spurious four-wave mixing that phase-matches when the mismatch phase
+        per nonlinear kick nears 2*pi; this mask is an opt-in guard for
+        coarse n_substeps=1 runs where that onset can fall inside the
+        resolved band. With n_substeps>=4 the onset sits far outside the
+        physical window and the mask should stay OFF. Default False
+        (bit-identical).
+    validity_phase_threshold : float, optional
+        per-sub-step mismatch-phase threshold (rad)
+        for the validity mask (default pi, below the ~2*pi spurious-FWM
+        onset).
+    fine_cadence_M : int, optional
+        Advance the whole evolution (field, thermal ODE, detuning,
+        pump, energy balance, masks) at the fine cadence dt = t_r / M instead
+        of refreshing the thermal/detuning/energy once per round trip. This
+        removes the residual t_r-periodic modulation of the mean-field map (a
+        driver of parametric round-trip-map resonances) at fixed total
+        physical time. Default 1 = bit-identical per-round-trip integrator.
+    quantum_noise_enabled : bool or None, optional
+        Master switch for the quantum-vacuum Langevin
+        drive (see the "Quantum noise" section above). ``None`` (default) =
+        read the ``quantum_noise_enabled`` config key (itself defaulting to
+        off); an explicit bool overrides the config. OFF is bit-identical to
+        the legacy solver.
+    quantum_noise_seed_vacuum_init : bool or None, optional
+        When the master switch is on, seed a
+        COLD start with the half-photon-per-mode vacuum draw instead of the
+        legacy 1e-3*|e_cw| noise. ``None`` (default) = read the
+        ``quantum_noise_seed_vacuum_init`` config key (default on). Ignored
+        when the master switch is off or when ``e0_override`` is given.
+    quantum_noise_injection_cadence : int or None, optional
+        0 = inject once per FINE step
+        (dt_fine = t_r/fine_cadence_M; the default, exact prescription) or
+        1 = once per ROUND TRIP (at fine-step m = 0 with the variance
+        scaled to dt = t_r) — a CPU-performance knob valid because
+        kappa*t_r ~ 6.2e-3 << 1 keeps per-round-trip injection deep in the
+        continuum limit (steady occupation 0.5015 vs 0.5). With
+        fine_cadence_M = 1 the two cadences are bit-identical. ``None``
+        (default) = read the ``quantum_noise_injection_cadence`` config key
+        (default 0).
+    pump_noise_enabled : bool or None, optional
+        Master switch for pump-laser frequency noise and
+        RIN (see the "Pump-laser noise" section above). ``None`` (default)
+        = read the ``pump_noise_enabled`` config key (itself defaulting to
+        off); an explicit bool overrides the config. OFF (and no override)
+        is bit-identical to the legacy solver. Providing either override
+        below forces that channel on regardless of this flag.
+    pump_freq_noise_override : numpy.ndarray or jax.Array or None, optional
+        Optional DETERMINISTIC laser-frequency
+        deviation delta_nu_p(t) in Hz, shape (t_slow,) or (n_traj, t_slow),
+        used INSTEAD of the stochastic frequency-noise synthesis. The
+        solver sums -2*pi*delta_nu_p into ``noise_sequences`` and returns it
+        as ``pump_freq_noise_history``. Used by the sign-convention and
+        linear-response tests.
+    pump_rin_epsilon_override : numpy.ndarray or jax.Array or None, optional
+        Optional DETERMINISTIC relative-intensity
+        deviation eps(t), shape (t_slow,) or (n_traj, t_slow), used INSTEAD
+        of the stochastic RIN synthesis. The pump-power scale is
+        1 + eps(t); returned as ``pump_rin_epsilon_history``.
+    fsr_noise_enabled : bool or None, optional
+        Master switch for the TRN-driven FSR
+        (repetition-rate) noise term. ``None`` (default) = read the
+        ``fsr_noise_enabled`` config key (itself defaulting to off); an
+        explicit bool overrides the config. When on, the FSR fluctuation
+        dD1(t) = (D1/omega0)*C_pull*dT(t) is built from the SAME
+        temperature sequence dT(t) that drives the TRN/Pyro-EO detuning
+        noise (regenerated deterministically from the same noise keys),
+        with D1 = 2*pi*fsr_hz, omega0 = 2*pi*c/pump_wavelength_m and
+        C_pull = (omega0/n0)*(dn_dT + n0*alpha_L_per_k); each mode mu
+        then acquires the extra linear detuning mu*dD1(t) inside the
+        linear operator. T_k = 0 zeroes dT and hence this channel. OFF
+        (and no override) traces zero extra ops (Python None branch).
+        Returned as ``fsr_delta_d1_history`` [rad/s] when active.
+    fsr_delta_d1_override : numpy.ndarray or jax.Array or None, optional
+        Optional DETERMINISTIC dD1(t) [rad/s], shape
+        (t_slow,) or (n_traj, t_slow), used INSTEAD of the TRN-derived
+        synthesis (forces the channel on). Used by the exact spectral-
+        shift validation test (mode mu acquires phase -mu*dD1*t).
+    mode_probe_indices : tuple of int or list of int or None, optional
+        Optional tuple of MODE numbers mu (relative to
+        the pump; negatives allowed) whose complex FFT amplitudes E~_mu
+        are recorded EVERY round trip into ``mode_probe_history``
+        (n_traj, t_slow, n_probe) complex128 — the raw material of the
+        noise-metrology suite (analysis/noise_metrology.py). At most 16
+        probes (asserted); for n_probe <= 8 and t_slow = 5e5 the history
+        is <= 128 MB. Cost: ONE dedicated jnp.fft.fft of the
+        end-of-round-trip field per round trip, traced only when probes
+        are requested (default None/() = no probes, zero extra ops).
+    noise_config : NoiseConfig or None, optional
+        Optional :class:`~simulator.noise_config.NoiseConfig`.
+        Besides the channel switches it carries ``thermal_integrator``,
+        which selects how the thermo-optic ODE is advanced:
+        ``"euler"`` (the default, and what every committed golden
+        trajectory was produced with) is the historical explicit-Euler
+        update -- order 1, and divergent once ``dt_fine/tau_th > 2``;
+        ``"exponential"`` is the EXACT update for piecewise-constant
+        ``P_abs``, ``DeltaT_next = a*DeltaT + (1-a)*R_th*P_abs`` with
+        ``a = exp(-dt_fine/tau_th)`` (see :func:`_thermal_step`). Because
+        the ODE is linear in ``DeltaT`` the exponential form carries no
+        truncation error at all and is unconditionally stable, so it stops
+        the thermal update from capping the global order of the otherwise
+        second-order Strang-split field steps at 1. Selected as a static
+        Python flag, so ``"euler"`` traces the historical graph verbatim.
+    source_fn : callable or None, optional
+        Optional manufactured-solution forcing S(tau, t) for the
+        method-of-manufactured-solutions study (``validation/mms.py``). A
+        jax-traceable callable taking the scalar sub-step time t [s] and
+        returning an (n_tau,) complex array; it is added as S(t)*dt_sub in
+        the same place and the same way as the pump kick. ``None`` (the
+        default) traces the legacy path with zero extra ops. Pass a stable
+        callable object — it is part of the jit cache key.
+    symmetric_drive : bool, optional
+        If True, split the drive kick into two half kicks
+        straddling the Strang core, making the sub-step palindromic and
+        the scheme SECOND order. ``False`` (the default) is the legacy
+        single full-dt kick before L·N·L, which is first order overall.
+        See the "order of accuracy" section of
+        :func:`_single_trajectory_solver`. Changes every trajectory when
+        enabled, hence opt-in.
+    thermal_coupling : {'lagged', 'strang'}, optional
+        ``"lagged"`` (the default, and what every committed
+        golden trajectory was produced with) uses ΔT from the start of the
+        step in the field update and P_abs from the end of it in the
+        thermal update — an explicit, first-order coupling that caps the
+        coupled system at order 1 even with
+        ``thermal_integrator="exponential"``. ``"strang"`` splits the ΔT
+        update into two half steps sandwiching the field update; combined
+        with the exponential integrator and ``symmetric_drive`` this
+        reaches order 2.
+    provenance : bool, optional
+        If True, attach a ``"provenance"`` entry to the returned
+        dict recording HOW this run was produced (see
+        :mod:`simulator.provenance`): calling script, git commit, hashes of
+        the resolved ``physical_parameters`` block and of the resolved
+        :class:`~simulator.noise_config.NoiseConfig`, the seed, an
+        environment fingerprint (JAX/BLAS/backend/device) and the pinned
+        arXiv reference. Default False, which leaves the returned dict
+        unchanged key-for-key — the golden whole-dict hash in
+        ``tests/test_regression_figures.py`` and the array manifests in
+        ``validation/noise_off_identity.py`` assume the legacy key set, and
+        the stamp carries a wall-clock timestamp so it is not reproducible
+        by construction. Purely bookkeeping: it adds no RNG calls and no
+        arithmetic, so the physics is bit-identical either way.
 
-    Quantum noise: with ``quantum_noise_enabled`` (config key or kwarg; OFF by
-      default) the solver adds the physically normalized quantum-vacuum Langevin
-      drive of Herr, Tikan & Kippenberg, arXiv:2604.05897, Sec. V.B.2, Eq. 126:
-      each mode receives sqrt(kappa)*xi_mu(t) with
-      <xi_mu(t) xi_mu'^dagger(t')> = delta(t-t') delta_mumu', both loss baths
-      (kappa_0, kappa_ex) combined since both are vacuum/coherent (no squeezed
-      baths). In the classical truncated-Wigner (symmetric-ordering) c-number
-      limit this is additive complex Gaussian noise with
-      <xi_mu xi_mu'*> = 1/2 delta(t-t') delta_mumu', whose undriven steady state
-      is the symmetric-ordered vacuum occupation of 1/2 photon per mode. It is
-      injected in the TIME domain once per fine step (dt_fine = t_r/M): every
-      fast-time sample gets an i.i.d. complex Gaussian of per-quadrature std
-      sqrt(hbar*omega0*kappa*n_tau*dt_fine/4), which by Parseval
-      (Emode_mu = a_mu*n_tau*sqrt(hbar*omega0), photon number
-      n_mu = |Emode_mu|^2/(n_tau^2*hbar*omega0)) equals an independent
-      photon-amplitude increment of variance (kappa/2)*dt_fine per mode.
-      hbar*omega0 is evaluated at the pump for ALL modes (<1% error over the
-      comb span). When additionally ``quantum_noise_seed_vacuum_init`` is on
-      (default when enabled), a COLD start seeds the analytic CW state with one
-      complex Gaussian draw of per-sample variance hbar*omega0*n_tau/2
-      (<n_mu> = 1/2 at t=0) instead of the legacy 1e-3*|e_cw| noise; the legacy
-      seed path itself is untouched (bypassed via the warm-start branch). With
-      the flag OFF the solver is bit-identical to the legacy solver: no RNG
-      calls or arithmetic are added to the scan body and the RNG key chain of
-      the legacy paths is unchanged.
+    Returns
+    -------
+    dict of str to numpy.ndarray
+        Always present, with ``n_traj`` the number of trajectories:
+        ``U_int_history`` (n_traj, t_slow) intracavity energy [J*s],
+        ``P_trans_history`` (n_traj, t_slow) transmitted power [W],
+        ``DeltaT_history`` (n_traj, t_slow) thermo-optic temperature [K],
+        ``delta_omega_eff_history`` (n_traj, t_slow) effective detuning
+        including thermal and noise contributions [rad/s],
+        ``E_snapshots`` (n_traj, n_snapshots, n_tau) complex128 field
+        [sqrt(J)], ``label_history`` (n_traj, n_snapshots) int32 state
+        classes, ``e_final`` (n_traj, n_tau) complex128 [sqrt(J)] and
+        ``delta_t_final`` (n_traj,) [K].
 
-    Pump-laser noise: with ``pump_noise_enabled`` (config key or kwarg; OFF by
-      default) the solver adds pump-laser frequency noise and relative
-      intensity noise (RIN) per Herr, Tikan & Kippenberg, arXiv:2604.05897,
-      Secs. V.B.4-V.B.5. Both channels are synthesized HOST-SIDE in float64
-      once per trajectory (see :class:`simulator.noise_models.PumpNoise`) and
-      threaded into the SAME machinery the intracavity dynamics already
-      provide -- the solver IS the transfer function, so cavity filtering and
-      quadrature rotation happen automatically and no transfer function is
-      hand-implemented:
-        * Frequency noise. The frame co-rotates with the pump, so the
-          instantaneous laser-frequency deviation delta_nu_p(t) is exactly a
-          detuning noise. Because delta_omega = omega_res - omega_p, a positive
-          laser-frequency excursion LOWERS delta_omega: the contribution
-          -2*pi*delta_nu_p(t) is SUMMED into ``noise_sequences`` on the host
-          (before the vmap), so NO solver-scan change is needed and the cavity
-          low-pass / quadrature rotation emerge from the equations of motion.
-          Returned as ``pump_freq_noise_history`` (the -2*pi*delta_nu_p
-          contribution to delta_omega, rad/s) for diagnostics.
-        * RIN. P_in(t) = Pbar_in*(1 + eps(t)); the per-round-trip pump-power
-          scale s_t = 1 + eps(t) is threaded as ``pump_scale_sequence`` so the
-          pump kick becomes sqrt(max(kappa_c*pin*s_t, 0))*dt_sub, held constant
-          across the fine/sub-steps (RIN bandwidth << FSR). The
-          absorbed-power/thermal pathway then transduces RIN -> P_abs -> DeltaT
-          -> detuning automatically (the paper's thermal transfer mechanism)
-          with no extra code. Returned as ``pump_rin_epsilon_history`` (eps).
-      New per-trajectory subkeys are APPENDED to the existing key chain
-      (key_field/key_noise/key_qnoise unchanged), so enabling pump noise does
-      not perturb any legacy RNG stream. With the flag OFF (and no override)
-      the frequency channel adds a zero sequence to ``noise_sequences`` (a
-      no-op) and ``pump_scale_sequence`` is None, so the scan traces the
-      legacy constant-kick path with zero extra ops. Deterministic overrides
-      ``pump_freq_noise_override`` (delta_nu_p in Hz) and
-      ``pump_rin_epsilon_override`` (eps) bypass the stochastic synthesis for
-      the linear-response / sign-convention tests.
-
-    Args:
-        pin: Pump power in watts.
-        delta_omega: Detuning sweep (omega_res - omega_pump) in rad/s, shape
-            (n_traj, t_slow). A scalar or 1-D (t_slow,) input is broadcast to a
-            single trajectory. delta_omega[traj, step] is the detuning per round trip.
-        t_slow: Number of round trips.
-        beta: Dispersion coefficient list [beta2, beta3, beta4].
-        kappa: Total cavity loss rate (rad/s).
-        kappa_c: Coupling rate (rad/s).
-        rng_key: PRNG key for initial noise seeding.
-        n_tau: Number of fast-time grid points.
-        config_path: Optional YAML config override.
-        l_eff: Effective nonlinear interaction length.
-        snapshot_interval: Round-trip interval for field snapshots and labels.
-        e0_override: Optional warm-start intracavity field. ``None`` (default) =
-            cold start from the analytic CW state + seeding noise (the historical
-            behaviour). If given, it is the exact initial field E(tau) and NO
-            seeding noise is added, so it can inject an analytic soliton ansatz for
-            deterministic DKS access. Shape (n_tau,) is broadcast to every
-            trajectory; shape (n_traj, n_tau) supplies a per-trajectory warm start.
-        delta_t0_override: Optional warm-start thermal state DeltaT (K). ``None``
-            (default) = start cold (DeltaT=0). Scalar broadcasts to all
-            trajectories; shape (n_traj,) is per-trajectory.
-        d_int_grid: Optional per-mode integrated dispersion D_int(mu) [rad/s] in
-            FFT-bin order, shape (n_tau,). ``None`` (default) = build dispersion
-            from the Taylor ``beta`` list (historical behavior). When given it is
-            used verbatim as the linear-operator dispersion (broadcast across all
-            trajectories) and the Taylor path is bypassed; use
-            :func:`load_dint_grid` to build it from a measured dispersion CSV.
-        n_substeps: Number of Strang split-step sub-steps per round trip
-            (positive int, default 1). Each sub-step integrates over
-            dt = t_r / n_substeps, shrinking the per-sub-step linear phase
-            |D_int·dt| so the split-step spurious-sideband instability (which
-            appears once |D_int·t_r| nears π at large |mu|) is pushed out of the
-            physical band. n_substeps=1 reproduces the legacy single-step solver
-            bit-for-bit. The pump drive is distributed across sub-steps so the
-            per-round-trip total is unchanged; detuning, thermal update, energy
-            balance, snapshots, and labels are computed once per round trip.
-        dealias_two_thirds: If True, zero the Fourier modes with |mu| > n_tau/3
-            after each nonlinear kick (standard 2/3 de-aliasing of the cubic
-            nonlinearity). Default False (bit-identical legacy behaviour).
-        edge_absorber: If True, multiply the field once per round trip by a
-            super-Gaussian in mode space that is ~1 across the interior and ramps
-            to strong attenuation over the outer ``edge_absorber_frac`` of |mu| on
-            each side, damping energy at the (partly extrapolated) grid edges.
-            Default False. Both toggles OFF reproduce the current solver exactly;
-            production physical runs should set both ON.
-        edge_absorber_frac: Outer fraction of |mu| (each side) over which the
-            edge absorber ramps (default 0.12). At n_tau=8192 the onset is
-            |mu| ~ 3604 and at 16384 ~ 7209, both beyond the physical window
-            (|mu|<=2744) so the absorber never touches it.
-        dispersion_validity_mask: If True, smoothly damp (once per fine step)
-            the modes whose per-sub-step linear-phase MISMATCH
-            |D_int - delta_omega|*dt_sub exceeds ``validity_phase_threshold``.
-            The linear step applies the exact exponential, which is valid at any
-            phase, so a large |D_int*t_r| does NOT by itself invalidate the map
-            (an earlier |D_int*t_r|-keyed mask amputated real soliton-tail and
-            dispersive-wave spectrum). The only genuine discrete-map artifact is
-            spurious four-wave mixing that phase-matches when the mismatch phase
-            per nonlinear kick nears 2*pi; this mask is an opt-in guard for
-            coarse n_substeps=1 runs where that onset can fall inside the
-            resolved band. With n_substeps>=4 the onset sits far outside the
-            physical window and the mask should stay OFF. Default False
-            (bit-identical).
-        validity_phase_threshold: per-sub-step mismatch-phase threshold (rad)
-            for the validity mask (default pi, below the ~2*pi spurious-FWM
-            onset).
-        fine_cadence_M: Advance the whole evolution (field, thermal ODE, detuning,
-            pump, energy balance, masks) at the fine cadence dt = t_r / M instead
-            of refreshing the thermal/detuning/energy once per round trip. This
-            removes the residual t_r-periodic modulation of the mean-field map (a
-            driver of parametric round-trip-map resonances) at fixed total
-            physical time. Default 1 = bit-identical per-round-trip integrator.
-        quantum_noise_enabled: Master switch for the quantum-vacuum Langevin
-            drive (see the "Quantum noise" section above). ``None`` (default) =
-            read the ``quantum_noise_enabled`` config key (itself defaulting to
-            off); an explicit bool overrides the config. OFF is bit-identical to
-            the legacy solver.
-        quantum_noise_seed_vacuum_init: When the master switch is on, seed a
-            COLD start with the half-photon-per-mode vacuum draw instead of the
-            legacy 1e-3*|e_cw| noise. ``None`` (default) = read the
-            ``quantum_noise_seed_vacuum_init`` config key (default on). Ignored
-            when the master switch is off or when ``e0_override`` is given.
-        quantum_noise_injection_cadence: 0 = inject once per FINE step
-            (dt_fine = t_r/fine_cadence_M; the default, exact prescription) or
-            1 = once per ROUND TRIP (at fine-step m = 0 with the variance
-            scaled to dt = t_r) — a CPU-performance knob valid because
-            kappa*t_r ~ 6.2e-3 << 1 keeps per-round-trip injection deep in the
-            continuum limit (steady occupation 0.5015 vs 0.5). With
-            fine_cadence_M = 1 the two cadences are bit-identical. ``None``
-            (default) = read the ``quantum_noise_injection_cadence`` config key
-            (default 0).
-        pump_noise_enabled: Master switch for pump-laser frequency noise and
-            RIN (see the "Pump-laser noise" section above). ``None`` (default)
-            = read the ``pump_noise_enabled`` config key (itself defaulting to
-            off); an explicit bool overrides the config. OFF (and no override)
-            is bit-identical to the legacy solver. Providing either override
-            below forces that channel on regardless of this flag.
-        pump_freq_noise_override: Optional DETERMINISTIC laser-frequency
-            deviation delta_nu_p(t) in Hz, shape (t_slow,) or (n_traj, t_slow),
-            used INSTEAD of the stochastic frequency-noise synthesis. The
-            solver sums -2*pi*delta_nu_p into ``noise_sequences`` and returns it
-            as ``pump_freq_noise_history``. Used by the sign-convention and
-            linear-response tests.
-        pump_rin_epsilon_override: Optional DETERMINISTIC relative-intensity
-            deviation eps(t), shape (t_slow,) or (n_traj, t_slow), used INSTEAD
-            of the stochastic RIN synthesis. The pump-power scale is
-            1 + eps(t); returned as ``pump_rin_epsilon_history``.
-        fsr_noise_enabled: Master switch for the TRN-driven FSR
-            (repetition-rate) noise term. ``None`` (default) = read the
-            ``fsr_noise_enabled`` config key (itself defaulting to off); an
-            explicit bool overrides the config. When on, the FSR fluctuation
-            dD1(t) = (D1/omega0)*C_pull*dT(t) is built from the SAME
-            temperature sequence dT(t) that drives the TRN/Pyro-EO detuning
-            noise (regenerated deterministically from the same noise keys),
-            with D1 = 2*pi*fsr_hz, omega0 = 2*pi*c/pump_wavelength_m and
-            C_pull = (omega0/n0)*(dn_dT + n0*alpha_L_per_k); each mode mu
-            then acquires the extra linear detuning mu*dD1(t) inside the
-            linear operator. T_k = 0 zeroes dT and hence this channel. OFF
-            (and no override) traces zero extra ops (Python None branch).
-            Returned as ``fsr_delta_d1_history`` [rad/s] when active.
-        fsr_delta_d1_override: Optional DETERMINISTIC dD1(t) [rad/s], shape
-            (t_slow,) or (n_traj, t_slow), used INSTEAD of the TRN-derived
-            synthesis (forces the channel on). Used by the exact spectral-
-            shift validation test (mode mu acquires phase -mu*dD1*t).
-        mode_probe_indices: Optional tuple of MODE numbers mu (relative to
-            the pump; negatives allowed) whose complex FFT amplitudes E~_mu
-            are recorded EVERY round trip into ``mode_probe_history``
-            (n_traj, t_slow, n_probe) complex128 — the raw material of the
-            noise-metrology suite (analysis/noise_metrology.py). At most 16
-            probes (asserted); for n_probe <= 8 and t_slow = 5e5 the history
-            is <= 128 MB. Cost: ONE dedicated jnp.fft.fft of the
-            end-of-round-trip field per round trip, traced only when probes
-            are requested (default None/() = no probes, zero extra ops).
-        noise_config: Optional :class:`~simulator.noise_config.NoiseConfig`.
-            Besides the channel switches it carries ``thermal_integrator``,
-            which selects how the thermo-optic ODE is advanced:
-            ``"euler"`` (the default, and what every committed golden
-            trajectory was produced with) is the historical explicit-Euler
-            update -- order 1, and divergent once ``dt_fine/tau_th > 2``;
-            ``"exponential"`` is the EXACT update for piecewise-constant
-            ``P_abs``, ``DeltaT_next = a*DeltaT + (1-a)*R_th*P_abs`` with
-            ``a = exp(-dt_fine/tau_th)`` (see :func:`_thermal_step`). Because
-            the ODE is linear in ``DeltaT`` the exponential form carries no
-            truncation error at all and is unconditionally stable, so it stops
-            the thermal update from capping the global order of the otherwise
-            second-order Strang-split field steps at 1. Selected as a static
-            Python flag, so ``"euler"`` traces the historical graph verbatim.
-        source_fn: Optional manufactured-solution forcing S(tau, t) for the
-            method-of-manufactured-solutions study (``validation/mms.py``). A
-            jax-traceable callable taking the scalar sub-step time t [s] and
-            returning an (n_tau,) complex array; it is added as S(t)*dt_sub in
-            the same place and the same way as the pump kick. ``None`` (the
-            default) traces the legacy path with zero extra ops. Pass a stable
-            callable object — it is part of the jit cache key.
-        symmetric_drive: If True, split the drive kick into two half kicks
-            straddling the Strang core, making the sub-step palindromic and
-            the scheme SECOND order. ``False`` (the default) is the legacy
-            single full-dt kick before L·N·L, which is first order overall.
-            See the "order of accuracy" section of
-            :func:`_single_trajectory_solver`. Changes every trajectory when
-            enabled, hence opt-in.
-        thermal_coupling: ``"lagged"`` (the default, and what every committed
-            golden trajectory was produced with) uses ΔT from the start of the
-            step in the field update and P_abs from the end of it in the
-            thermal update — an explicit, first-order coupling that caps the
-            coupled system at order 1 even with
-            ``thermal_integrator="exponential"``. ``"strang"`` splits the ΔT
-            update into two half steps sandwiching the field update; combined
-            with the exponential integrator and ``symmetric_drive`` this
-            reaches order 2.
-        provenance: If True, attach a ``"provenance"`` entry to the returned
-            dict recording HOW this run was produced (see
-            :mod:`simulator.provenance`): calling script, git commit, hashes of
-            the resolved ``physical_parameters`` block and of the resolved
-            :class:`~simulator.noise_config.NoiseConfig`, the seed, an
-            environment fingerprint (JAX/BLAS/backend/device) and the pinned
-            arXiv reference. Default False, which leaves the returned dict
-            unchanged key-for-key — the golden whole-dict hash in
-            ``tests/test_regression_figures.py`` and the array manifests in
-            ``validation/noise_off_identity.py`` assume the legacy key set, and
-            the stamp carries a wall-clock timestamp so it is not reproducible
-            by construction. Purely bookkeeping: it adds no RNG calls and no
-            arithmetic, so the physics is bit-identical either way.
-
-    Returns:
         Dictionary containing requested histories. When pump noise is active
         it additionally contains ``pump_freq_noise_history`` (the
         -2*pi*delta_nu_p contribution to delta_omega, rad/s) and
@@ -1676,6 +2049,131 @@ def solve_lle_ssfm_jax(
         ``mode_probe_history`` (complex128, shape (n_traj, t_slow, n_probe)),
         the per-round-trip FFT amplitudes E~_mu of the probed modes in the
         order given by ``mode_probe_indices``.
+
+        When ``provenance=True`` a further ``"provenance"`` entry is attached
+        (a plain dict, not an array); with the default ``False`` the key set is
+        exactly the legacy one.
+
+    Raises
+    ------
+    ValueError
+        If ``n_substeps`` or ``fine_cadence_M`` is not a positive integer;
+        if ``delta_omega``, an override sequence, ``e0_override``,
+        ``delta_t0_override`` or ``d_int_grid`` has a shape incompatible
+        with ``(n_traj, t_slow)`` / ``(n_tau,)``; or if
+        ``thermal_coupling`` is neither ``'lagged'`` nor ``'strang'``.
+    AssertionError
+        From the physical pre-flight checks, each of which names the
+        conversion that fixes it: ``gamma_LLE`` outside ``(1e15, 1e25)``
+        J^-1 s^-1 (a fiber-optics ``gamma_NLSE`` entered unconverted --
+        see :func:`gamma_nlse_to_lle`); ``beta[0]`` outside
+        ``[1e-20, 1e-12]`` s (see :func:`d2_to_beta2_lle`); ``Gamma_th``
+        outside ``(1e-5, 1.0)``; ``kappa_i`` outside ``(1e6, 1e12)``
+        rad/s; a worst-case steady thermal shift above
+        ``thermal_shift_max_over_kappa * kappa`` [rad/s]; a boolean-valued
+        switch that is neither ``bool`` nor 0/1; more than 16 mode probes;
+        or a probe index outside ``[-n_tau/2, n_tau/2)``.
+    OSError
+        If ``config_path`` cannot be read.
+
+    Notes
+    -----
+    Sign convention
+    ~~~~~~~~~~~~~~~
+    Detuning convention: delta_omega = omega_res - omega_pump  (cavity minus pump);
+    this matches the implemented dynamical term  -1j * delta_omega * E.
+    Positive delta_omega = red-detuned pump (pump below resonance) = soliton side.
+    Solitons exist for kappa/2 < delta_omega < ~5*kappa.
+    For adiabatic soliton access, sweep delta_omega from negative to positive
+    (blue-to-red pump scan).
+
+    Quantum-vacuum Langevin drive
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    Quantum noise: with ``quantum_noise_enabled`` (config key or kwarg; OFF by
+    default) the solver adds the physically normalized quantum-vacuum Langevin
+    drive of Herr, Tikan & Kippenberg, arXiv:2604.05897v1, Sec. V.B.2, Eq. 126:
+    each mode receives sqrt(kappa)*xi_mu(t) with
+    <xi_mu(t) xi_mu'^dagger(t')> = delta(t-t') delta_mumu', both loss baths
+    (kappa_0, kappa_ex) combined since both are vacuum/coherent (no squeezed
+    baths). In the classical truncated-Wigner (symmetric-ordering) c-number
+    limit this is additive complex Gaussian noise with
+    <xi_mu xi_mu'*> = 1/2 delta(t-t') delta_mumu', whose undriven steady state
+    is the symmetric-ordered vacuum occupation of 1/2 photon per mode. It is
+    injected in the TIME domain once per fine step (dt_fine = t_r/M): every
+    fast-time sample gets an i.i.d. complex Gaussian of per-quadrature std
+    sqrt(hbar*omega0*kappa*n_tau*dt_fine/4), which by Parseval
+    (Emode_mu = a_mu*n_tau*sqrt(hbar*omega0), photon number
+    n_mu = |Emode_mu|^2/(n_tau^2*hbar*omega0)) equals an independent
+    photon-amplitude increment of variance (kappa/2)*dt_fine per mode.
+    hbar*omega0 is evaluated at the pump for ALL modes (<1% error over the
+    comb span). When additionally ``quantum_noise_seed_vacuum_init`` is on
+    (default when enabled), a COLD start seeds the analytic CW state with one
+    complex Gaussian draw of per-sample variance hbar*omega0*n_tau/2
+    (<n_mu> = 1/2 at t=0) instead of the legacy 1e-3*|e_cw| noise; the legacy
+    seed path itself is untouched (bypassed via the warm-start branch). With
+    the flag OFF the solver is bit-identical to the legacy solver: no RNG
+    calls or arithmetic are added to the scan body and the RNG key chain of
+    the legacy paths is unchanged.
+
+    Pump-laser frequency noise and RIN
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    Pump-laser noise: with ``pump_noise_enabled`` (config key or kwarg; OFF by
+    default) the solver adds pump-laser frequency noise and relative
+    intensity noise (RIN) per Herr, Tikan & Kippenberg, arXiv:2604.05897v1,
+    Secs. V.B.4-V.B.5. Both channels are synthesized HOST-SIDE in float64
+    once per trajectory (see :class:`simulator.noise_models.PumpNoise`) and
+    threaded into the SAME machinery the intracavity dynamics already
+    provide -- the solver IS the transfer function, so cavity filtering and
+    quadrature rotation happen automatically and no transfer function is
+    hand-implemented:
+
+      * Frequency noise. The frame co-rotates with the pump, so the
+        instantaneous laser-frequency deviation delta_nu_p(t) is exactly a
+        detuning noise. Because delta_omega = omega_res - omega_p, a positive
+        laser-frequency excursion LOWERS delta_omega: the contribution
+        -2*pi*delta_nu_p(t) is SUMMED into ``noise_sequences`` on the host
+        (before the vmap), so NO solver-scan change is needed and the cavity
+        low-pass / quadrature rotation emerge from the equations of motion.
+        Returned as ``pump_freq_noise_history`` (the -2*pi*delta_nu_p
+        contribution to delta_omega, rad/s) for diagnostics.
+      * RIN. P_in(t) = Pbar_in*(1 + eps(t)); the per-round-trip pump-power
+        scale s_t = 1 + eps(t) is threaded as ``pump_scale_sequence`` so the
+        pump kick becomes sqrt(max(kappa_c*pin*s_t, 0))*dt_sub, held constant
+        across the fine/sub-steps (RIN bandwidth << FSR). The
+        absorbed-power/thermal pathway then transduces RIN -> P_abs -> DeltaT
+        -> detuning automatically (the paper's thermal transfer mechanism)
+        with no extra code. Returned as ``pump_rin_epsilon_history`` (eps).
+
+    New per-trajectory subkeys are APPENDED to the existing key chain
+    (key_field/key_noise/key_qnoise unchanged), so enabling pump noise does
+    not perturb any legacy RNG stream. With the flag OFF (and no override)
+    the frequency channel adds a zero sequence to ``noise_sequences`` (a
+    no-op) and ``pump_scale_sequence`` is None, so the scan traces the
+    legacy constant-kick path with zero extra ops. Deterministic overrides
+    ``pump_freq_noise_override`` (delta_nu_p in Hz) and
+    ``pump_rin_epsilon_override`` (eps) bypass the stochastic synthesis for
+    the linear-response / sign-convention tests.
+
+    Examples
+    --------
+    A 20-round-trip smoke solve on a 32-point grid -- enough to exercise
+    every return key, far too short to reach a steady state. Production
+    runs are 1e5--1e6 round trips, so this is the only form of this
+    example that belongs in a doctest:
+
+    >>> import contextlib, io
+    >>> import jax, numpy as np
+    >>> _, kappa_c, kappa = resolve_cavity_rates()
+    >>> with contextlib.redirect_stdout(io.StringIO()):   # pre-flight banner
+    ...     solution = solve_lle_ssfm_jax(
+    ...         pin=0.1, delta_omega=np.full(20, 2.0 * kappa), t_slow=20,
+    ...         beta=[1e-18], kappa=kappa, kappa_c=kappa_c,
+    ...         rng_key=jax.random.PRNGKey(0), n_tau=32,
+    ...         snapshot_interval=10)
+    >>> sorted(solution)
+    ['DeltaT_history', 'E_snapshots', 'P_trans_history', 'U_int_history', 'delta_omega_eff_history', 'delta_t_final', 'e_final', 'label_history']
+    >>> solution['U_int_history'].shape, solution['e_final'].shape
+    ((1, 20), (1, 32))
     """
 
     if int(n_substeps) < 1:
@@ -2309,9 +2807,87 @@ def validate_solver(
     t_r: float,
     traj_idx: int = 0,
     print_results: bool = True,
-    config_path=None,
+    config_path: str | Path | None = None,
 ) -> dict[str, bool]:
-    """Run basic solver validation checks and print pass/fail status."""
+    """Run the basic physical sanity checks on a completed solve.
+
+    Parameters
+    ----------
+    solution : dict of str to numpy.ndarray
+        The dict returned by :func:`solve_lle_ssfm_jax`. Reads
+        ``U_int_history`` [J*s], ``P_trans_history`` [W], ``E_snapshots``
+        [sqrt(J)] and ``delta_omega_eff_history`` [rad/s].
+    pin : float
+        Pump power [W] the solve was driven with.
+    kappa : float
+        Total cavity loss rate [rad/s].
+    kappa_c : float
+        Coupling rate [rad/s].
+    gamma : float
+        Nonlinear coefficient ``gamma_LLE`` [J^-1 s^-1].
+    t_r : float
+        Round-trip time [s]. Accepted for signature stability; the round-trip
+        time actually used in the CW energy balance is re-derived from
+        ``config_path`` as ``1/fsr_hz``, so that the balance cannot silently
+        use a different ``t_r`` from the solve.
+    traj_idx : int, optional
+        Which trajectory of a batched solution to check (default 0).
+        Dimensionless index.
+    print_results : bool, optional
+        Print one PASS/FAIL line per check (default ``True``). The CW
+        energy-balance line is printed unconditionally.
+    config_path : str or pathlib.Path or None, optional
+        YAML config used to recover ``fsr_hz`` [Hz] for the energy balance.
+        ``None`` (default) uses ``config/sin_params.yaml``.
+
+    Returns
+    -------
+    dict of str to bool
+        ``soliton_existence_condition``, ``sech2_spectral_envelope`` and
+        ``steady_state_energy_conservation``.
+
+    Raises
+    ------
+    AssertionError
+        If the steady-state intracavity energy deviates by 10% or more from
+        the analytic CW value, reporting both energies [J] and the effective
+        detuning [rad/s]. This is the one check that ABORTS rather than being
+        reported, because a solve that fails it is not a solve of this
+        equation.
+    KeyError
+        If ``solution`` is missing one of the four histories it reads.
+    IndexError
+        If ``traj_idx`` is out of range for a batched solution.
+
+    Notes
+    -----
+    Three reported checks plus one asserted balance.
+
+    ``soliton_existence_condition`` -- the pump exceeds the modulation-
+    instability threshold of the energy-normalized LLE at ``delta_omega -> 0``,
+
+        P_th = kappa**3 / (8 * gamma_LLE * kappa_c)   [W].
+
+    ``sech2_spectral_envelope`` -- the final power spectrum correlates above
+    0.7 with a sech**2 envelope, the spectral signature of a soliton
+    (``|FT{sech}|**2 = sech**2``).
+
+    ``steady_state_energy_conservation`` -- the last 20% of ``U_int_history``
+    and ``P_trans_history`` each have a relative standard deviation below 5%,
+    i.e. the run actually settled.
+
+    The asserted CW energy balance compares the mean of the last 100 round
+    trips against
+
+        U_cw = kappa_c * P_in * t_r / ((kappa/2)**2 + delta_omega**2)   [J],
+
+    where the ``t_r`` factor converts the power-normalized CW solution [W] into
+    this solver's energy normalization [J].
+
+    No ``Examples`` section: every check reads a settled trajectory, and
+    settling takes a long solve. The function is exercised end-to-end by the
+    regression suite rather than by a doctest.
+    """
     u_int = np.asarray(solution["U_int_history"])
     p_trans = np.asarray(solution["P_trans_history"])
     e_hist = np.asarray(solution["E_snapshots"])

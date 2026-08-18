@@ -147,6 +147,53 @@ CONVERGED_OBSERVABLES = (
 
 @dataclass(frozen=True)
 class OperatingPoint:
+    """One physical operating point the refinement ladders are run at.
+
+    Parameters
+    ----------
+    name : str
+        Identifier used in artifact filenames and in the report.
+    mu_half : int
+        Half-width of the mode grid [mode number]; the run uses
+        ``2*mu_half + 1`` modes so the grid is symmetric about the pump and the
+        mode count is ODD.
+    n_roundtrips : int
+        Length of the detuning ramp [round trips, dimensionless count].
+    dw_start_over_kappa : float
+        Ramp start detuning in units of ``kappa`` [dimensionless].
+    dw_end_over_kappa : float
+        Ramp end detuning in units of ``kappa`` [dimensionless]. This is the
+        operating point the observables are read at.
+    config_path : str
+        Path of the DERIVED config actually handed to the solver, not the
+        committed one.
+    seed_kind : str
+        Which deterministic seed was used; currently always
+        ``"sech_lower_branch"``.
+
+    Raises
+    ------
+    dataclasses.FrozenInstanceError
+        On any attempt to mutate an instance.
+
+    Notes
+    -----
+    Recording ``config_path`` and ``seed_kind`` on the operating point rather
+    than passing them around separately is what lets
+    :func:`build_provenance` state exactly which problem was solved: a ladder
+    that refined the integrator while quietly changing the problem would report
+    a meaningless order.
+
+    Examples
+    --------
+    >>> op = OperatingPoint(name="demo", mu_half=3300, n_roundtrips=5000,
+    ...                     dw_start_over_kappa=16.0, dw_end_over_kappa=30.0,
+    ...                     config_path="/tmp/derived.yaml",
+    ...                     seed_kind="sech_lower_branch")
+    >>> 2 * op.mu_half + 1          # odd mode count, symmetric about the pump
+    6601
+    """
+
     name: str
     mu_half: int
     n_roundtrips: int
@@ -165,7 +212,45 @@ def _spectrum_lines(field: np.ndarray) -> np.ndarray:
 
 
 def spectrum_dbc(field: np.ndarray) -> np.ndarray:
-    """Per-mode power in dB relative to the strongest line."""
+    """Convert a field to per-mode power in dB relative to the strongest line.
+
+    Parameters
+    ----------
+    field : numpy.ndarray
+        Intracavity field E(tau), shape ``(n_modes,)``, complex, units sqrt(J).
+
+    Returns
+    -------
+    numpy.ndarray
+        Shape ``(n_modes,)``, dtype ``float64``, units dBc, mu-centred
+        (fftshifted). The strongest line is exactly 0 dBc.
+
+    Raises
+    ------
+    ValueError
+        Propagated from ``numpy.fft`` for an empty field.
+
+    Notes
+    -----
+    Power is floored at 1e-300 before the logarithm, so an exactly zero mode
+    reports a large negative number rather than ``-inf`` and cannot poison a
+    downstream reduction.
+
+    "dBc" is relative to the strongest LINE, which at these operating points is
+    the pump. Several observables here exclude the pump bin explicitly for that
+    reason -- see :func:`subbin_span_3db`.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> n = 401
+    >>> tau = np.arange(n) - n // 2
+    >>> dbc = spectrum_dbc((1.0 / np.cosh(tau / 8.0)).astype(complex) + 0.1)
+    >>> print(dbc.shape, f"{dbc.max():.3f}")
+    (401,) 0.000
+    >>> bool((dbc <= 0.0).all())
+    True
+    """
     power = np.abs(_spectrum_lines(field)) ** 2
     return 10.0 * np.log10(np.maximum(power, 1e-300) / power.max())
 
@@ -181,6 +266,55 @@ def band_limited_peak(field: np.ndarray, t_r: float, upsample: int = UPSAMPLE) -
     Hermitian bin layout for ODD N: bins ``0..h`` are the non-negative
     frequencies and the top ``h`` bins are the negatives, ``h = (N-1)//2``. The
     ``K/N`` factor keeps ``ifft`` normalization consistent.
+
+    Parameters
+    ----------
+    field : numpy.ndarray
+        Intracavity field E(tau), shape ``(n_modes,)`` with ODD ``n_modes``,
+        complex, units sqrt(J).
+    t_r : float
+        Round-trip time [s], used to convert energy [J] to power [W].
+    upsample : int, optional
+        Zero-padding factor [dimensionless], default :data:`UPSAMPLE` (32).
+
+    Returns
+    -------
+    dict
+        ``P_peak_w`` [W] -- the band-limited peak; ``P_peak_raw_w`` [W] -- the
+        native-grid peak, kept for comparison because it is the legacy,
+        sampling-phase-biased quantity; ``peak_subsample_offset`` [native
+        samples] -- the displacement between the two argmax positions, wrapped
+        to the shortest signed distance.
+
+    Raises
+    ------
+    ValueError
+        If ``n_modes`` is even. The Hermitian bin layout used here is the
+        odd-length one, and applying it to an even grid would silently
+        mis-place the Nyquist bin.
+
+    Examples
+    --------
+    A pulse whose true maximum falls half a sample off the grid: the native
+    peak under-reads it, the band-limited reconstruction does not, and the
+    offset recovers the half sample.
+
+    >>> import numpy as np
+    >>> n = 401
+    >>> tau = np.arange(n) - n // 2
+    >>> pulse = (1.0 / np.cosh((tau - 0.5) / 8.0)).astype(complex) + 0.1
+    >>> peak = band_limited_peak(pulse, t_r=4.0e-11)
+    >>> sorted(peak)
+    ['P_peak_raw_w', 'P_peak_w', 'peak_subsample_offset']
+    >>> bool(peak["P_peak_w"] > peak["P_peak_raw_w"])
+    True
+    >>> print(f"{peak['peak_subsample_offset']:.4f}")
+    0.5000
+
+    >>> band_limited_peak(np.ones(400, dtype=complex), t_r=4.0e-11)
+    Traceback (most recent call last):
+        ...
+    ValueError: band_limited_peak assumes an ODD mode count, got 400
     """
     n = field.size
     if n % 2 == 0:
@@ -213,6 +347,60 @@ def subbin_span_3db(field: np.ndarray, mu: np.ndarray) -> dict:
 
     The pump bin carries the CW background and stands far above every comb line,
     so it is excluded; what is measured is the soliton's own spectral envelope.
+
+    Parameters
+    ----------
+    field : numpy.ndarray
+        Intracavity field E(tau), shape ``(n_modes,)``, complex, units sqrt(J).
+    mu : numpy.ndarray
+        Mode numbers [dimensionless], shape ``(n_modes,)``, mu-centred and
+        matching the ordering of :func:`spectrum_dbc`.
+
+    Returns
+    -------
+    dict
+        ``S3_modes`` [modes] -- the sub-bin span between the two dB-linear
+        level crossings; ``S3_int_modes`` [modes] -- the legacy integer extent
+        (last index at or above the level minus the first); ``S3_n_runs``
+        [count] -- the number of disjoint index runs above the level.
+
+    Raises
+    ------
+    IndexError
+        If ``mu`` and ``field`` have different lengths.
+
+    Notes
+    -----
+    ``S3_n_runs`` is reported because the metric is an EXTENT, not a width: if
+    more than one run sits above the level then the "span" bridges a gap and is
+    not a contiguous feature. Reporting the extent without that count would let
+    a two-lobed spectrum masquerade as a wide single lobe.
+
+    The sub-bin crossing is what makes the observable converge at all: the
+    integer extent moves in whole-mode jumps, so a refinement ladder built on it
+    would show a staircase rather than an order.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> n = 401
+    >>> mu = np.arange(n) - n // 2
+    >>> tau = np.arange(n) - n // 2
+    >>> span = subbin_span_3db((1.0 / np.cosh(tau / 8.0)).astype(complex) + 0.1,
+    ...                        mu)
+    >>> sorted(span)
+    ['S3_int_modes', 'S3_modes', 'S3_n_runs']
+    >>> print(f"{span['S3_modes']:.4f}")
+    9.1772
+    >>> span["S3_int_modes"]          # the quantized legacy extent
+    8
+
+    With the pump bin excluded the region above the level splits either side of
+    it, and the run count says so rather than letting the extent pass as a
+    single lobe:
+
+    >>> span["S3_n_runs"]
+    2
     """
     env = spectrum_dbc(field).copy()
     env[mu == 0] = -np.inf
@@ -254,6 +442,57 @@ def dw_centroid(field: np.ndarray, mu: np.ndarray, band=DW_BAND_DEFAULT) -> dict
     carries soliton/DW walk-off fringes of period ~10-13 modes, so a boxcar of
     comparable width displaces the smoothed argmax with the fringe phase, and
     differently for any two solutions.
+
+    Parameters
+    ----------
+    field : numpy.ndarray
+        Intracavity field E(tau), shape ``(n_modes,)``, complex, units sqrt(J).
+    mu : numpy.ndarray
+        Mode numbers [dimensionless], shape ``(n_modes,)``, mu-centred.
+    band : tuple of int, optional
+        Inclusive ``(mu_lo, mu_hi)`` window [mode numbers] the centroid is
+        taken over, default :data:`DW_BAND_DEFAULT`. FIXED before any run:
+        widening it after seeing a result would turn the observable into a
+        tuning knob.
+
+    Returns
+    -------
+    dict
+        ``mu_DW`` [mode number] -- the pedestal-subtracted power centroid, or
+        ``None`` if the band lies outside the grid or carries no power above
+        the pedestal; ``dw_power_dbc`` [dBc] -- the band's total power relative
+        to the strongest line, or ``None`` if the band is empty.
+
+    Raises
+    ------
+    IndexError
+        If ``mu`` and ``field`` have different lengths.
+
+    Notes
+    -----
+    The pedestal is the :data:`PEDESTAL_PCT` percentile WITHIN the band, so the
+    centroid measures the bump rather than the wing it sits on. A centroid
+    taken without that subtraction drifts with the wing level, which changes
+    between refinement levels for reasons that have nothing to do with the
+    dispersive wave.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> n = 401
+    >>> mu = np.arange(n) - n // 2
+    >>> tau = np.arange(n) - n // 2
+    >>> dw = dw_centroid((1.0 / np.cosh(tau / 8.0)).astype(complex) + 0.1,
+    ...                  mu, band=(-150, -100))
+    >>> sorted(dw)
+    ['dw_power_dbc', 'mu_DW']
+    >>> bool(-150 <= dw["mu_DW"] <= -100)     # the centroid stays in its band
+    True
+
+    A band off the grid yields ``None`` rather than a fabricated number:
+
+    >>> dw_centroid(np.ones(n, dtype=complex), mu, band=(10_000, 20_000))
+    {'mu_DW': None, 'dw_power_dbc': None}
     """
     p = np.abs(_spectrum_lines(field)) ** 2
     sel = (mu >= band[0]) & (mu <= band[1])
@@ -274,6 +513,53 @@ def line_count_diagnostics(field: np.ndarray, mu: np.ndarray) -> dict:
     ``dN60_ddB`` is the slope of the count against the threshold. A large value
     means the count is set by where a nearly-flat wing crosses an arbitrary
     line, not by the solution.
+
+    Parameters
+    ----------
+    field : numpy.ndarray
+        Intracavity field E(tau), shape ``(n_modes,)``, complex, units sqrt(J).
+    mu : numpy.ndarray
+        Mode numbers [dimensionless], shape ``(n_modes,)``, mu-centred.
+
+    Returns
+    -------
+    dict
+        ``N60`` [count] -- modes at or above :data:`DBC_THRESHOLD`;
+        ``dN60_ddB`` [lines per dB] -- the conditioning slope;
+        ``N60_core`` / ``N60_mid`` / ``N60_edge`` [counts] -- the same count
+        restricted to ``|mu| <= 1500``, ``1500 < |mu| <= 3000`` and
+        ``|mu| > 3000``.
+
+    Raises
+    ------
+    IndexError
+        If ``mu`` and ``field`` have different lengths.
+
+    Notes
+    -----
+    DIAGNOSTIC ONLY, never an acceptance gate. A line count is an integer
+    functional of a continuous field, so it cannot converge in the Richardson
+    sense: refining the discretization moves lines across the threshold in
+    steps. Reporting it with its own conditioning slope -- rather than
+    suppressing it or quietly gating on it -- is the honest option: the count is
+    informative to a reader and inadmissible as evidence.
+
+    The three band-restricted counts exist because a change in ``N60`` means
+    something quite different in the soliton core than at the extrapolated grid
+    edge.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> n = 401
+    >>> mu = np.arange(n) - n // 2
+    >>> tau = np.arange(n) - n // 2
+    >>> counts = line_count_diagnostics(
+    ...     (1.0 / np.cosh(tau / 8.0)).astype(complex) + 0.1, mu)
+    >>> sorted(counts)
+    ['N60', 'N60_core', 'N60_edge', 'N60_mid', 'dN60_ddB']
+    >>> counts["N60"] == counts["N60_core"] + counts["N60_mid"] + counts["N60_edge"]
+    True
     """
     dbc = spectrum_dbc(field)
     n60 = int(np.count_nonzero(dbc >= DBC_THRESHOLD))
@@ -290,7 +576,57 @@ def line_count_diagnostics(field: np.ndarray, mu: np.ndarray) -> dict:
 
 
 def integral_observables(field: np.ndarray, t_r: float, mu: np.ndarray) -> dict:
-    """D5. Translation-invariant integrals -- the well-posed observables."""
+    """Compute the translation-invariant integrals -- the well-posed observables.
+
+    Parameters
+    ----------
+    field : numpy.ndarray
+        Intracavity field E(tau), shape ``(n_modes,)``, complex, units sqrt(J).
+    t_r : float
+        Round-trip time [s].
+    mu : numpy.ndarray
+        Mode numbers [dimensionless], shape ``(n_modes,)``, mu-centred.
+
+    Returns
+    -------
+    dict
+        ``U_mean_w`` [W] -- the Parseval-exact mean intracavity power
+        ``sum|E_j|**2 / N / t_r``; ``comb_frac`` [dimensionless] -- the
+        fraction of spectral power outside the pump line, 0.0 when the field
+        carries no power at all.
+
+    Raises
+    ------
+    IndexError
+        If ``mu`` and ``field`` have different lengths.
+
+    Notes
+    -----
+    These are the observables that are well posed under every discretization
+    change, because they are INTEGRALS: they do not depend on where the
+    soliton sits in the window, on which sample its peak lands nearest, or on
+    where an arbitrary threshold cuts a wing. Everything else in this module is
+    reported with an uncertainty band precisely because it lacks that property.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> n = 401
+    >>> mu = np.arange(n) - n // 2
+    >>> tau = np.arange(n) - n // 2
+    >>> field = (1.0 / np.cosh(tau / 8.0)).astype(complex) + 0.1
+    >>> obs = integral_observables(field, t_r=4.0e-11, mu=mu)
+    >>> sorted(obs)
+    ['U_mean_w', 'comb_frac']
+    >>> bool(0.0 <= obs["comb_frac"] <= 1.0)
+    True
+
+    Translation invariance, which is the defining property:
+
+    >>> rolled = integral_observables(np.roll(field, 37), t_r=4.0e-11, mu=mu)
+    >>> bool(abs(rolled["U_mean_w"] / obs["U_mean_w"] - 1) < 1e-12)
+    True
+    """
     p_time = np.abs(field) ** 2
     u_mean = float(p_time.sum() / field.size / t_r)
     p_mode = np.abs(_spectrum_lines(field)) ** 2
@@ -304,7 +640,57 @@ def integral_observables(field: np.ndarray, t_r: float, mu: np.ndarray) -> dict:
 
 def observables_v2(field: np.ndarray, t_r: float, mu: np.ndarray,
                    band=DW_BAND_DEFAULT) -> dict:
-    """All of D1-D5 for one field."""
+    """Evaluate the full D1--D5 observable set for one field.
+
+    Parameters
+    ----------
+    field : numpy.ndarray
+        Intracavity field E(tau), shape ``(n_modes,)`` with ODD ``n_modes``,
+        complex, units sqrt(J).
+    t_r : float
+        Round-trip time [s].
+    mu : numpy.ndarray
+        Mode numbers [dimensionless], shape ``(n_modes,)``, mu-centred.
+    band : tuple of int, optional
+        Dispersive-wave band [mode numbers], default :data:`DW_BAND_DEFAULT`.
+
+    Returns
+    -------
+    dict
+        The merged output of :func:`band_limited_peak`,
+        :func:`subbin_span_3db`, :func:`dw_centroid`,
+        :func:`line_count_diagnostics` and :func:`integral_observables`. Every
+        key is described in :data:`OBSERVABLE_DEFINITIONS`, with the numerical
+        constants in :data:`OBSERVABLE_CONSTANTS`.
+
+    Raises
+    ------
+    ValueError
+        If ``n_modes`` is even (from :func:`band_limited_peak`).
+    IndexError
+        If ``mu`` and ``field`` have different lengths.
+
+    Notes
+    -----
+    The single entry point every level of every ladder goes through, so two
+    levels can never be compared under two different observable definitions.
+    Only the subset named in :data:`CONVERGED_OBSERVABLES` carries a Richardson
+    study; the quantized and legacy variants are computed and reported but
+    deliberately excluded from convergence gating.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> n = 401
+    >>> mu = np.arange(n) - n // 2
+    >>> tau = np.arange(n) - n // 2
+    >>> obs = observables_v2((1.0 / np.cosh(tau / 8.0)).astype(complex) + 0.1,
+    ...                      t_r=4.0e-11, mu=mu, band=(-150, -100))
+    >>> all(key in obs for key in CONVERGED_OBSERVABLES)
+    True
+    >>> set(obs) == set(OBSERVABLE_DEFINITIONS)
+    True
+    """
     out = {}
     out.update(band_limited_peak(field, t_r))
     out.update(subbin_span_3db(field, mu))
@@ -318,11 +704,75 @@ def observables_v2(field: np.ndarray, t_r: float, mu: np.ndarray,
 # D6 -- Richardson extrapolation and numerical uncertainty
 # ===========================================================================
 def richardson(values, h_values) -> dict:
-    """Observed order, extrapolated limit and GCI from >=3 levels (finest last).
+    """Extrapolate a refinement ladder and report its numerical uncertainty.
 
-    ``values`` and ``h_values`` are ordered coarse -> fine. Uses the three
-    finest levels. Every guard demanded by D6 is enforced, and the raw level
-    values are always returned alongside whatever status is produced.
+    Parameters
+    ----------
+    values : sequence
+        Observable value per refinement level, ordered COARSE to FINE. Entries
+        may be ``None`` for a level that did not produce the observable. Units
+        are the observable's own.
+    h_values : sequence of float
+        Step sizes [dimensionless, ``1/n_substeps``] matching ``values``, also
+        coarse to fine.
+
+    Returns
+    -------
+    dict
+        ``levels`` and ``h`` (the inputs, always echoed), ``observed_order``
+        [dimensionless], ``extrapolated`` (the Richardson limit, in the
+        observable's units), ``gci`` [relative, dimensionless], ``U_obs`` (the
+        claimed numerical uncertainty, relative) and ``status``.
+
+        ``status`` is ``'OK'``, ``'INSUFFICIENT_LEVELS'`` (fewer than three
+        finite levels), ``'NON_MONOTONE'`` (the two successive differences
+        vanish or change sign) or ``'ORDER_OUT_OF_RANGE'`` (the fitted order
+        falls outside :data:`ORDER_MIN` to :data:`ORDER_MAX`).
+
+    Raises
+    ------
+    IndexError
+        If ``h_values`` is shorter than ``values``.
+    ZeroDivisionError
+        If the two finest step sizes are equal, making the refinement ratio 1.
+
+    Notes
+    -----
+    Uses the three FINEST levels: ``p = log|d_coarse/d_fine| / log(r)`` with
+    ``r = h2/h1``, then ``q* = f1 + d_fine/(r**p - 1)`` and
+    ``gci = GCI_FS * |q* - f1|/|q*|``.
+
+    Every failure mode returns a conservative ``U_obs`` -- the larger of the two
+    successive differences, relative -- instead of ``None``. A ladder that
+    cannot be extrapolated still has a measured spread, and reporting no
+    uncertainty because the fit failed would be the one genuinely misleading
+    outcome.
+
+    For the same reason ``U_obs`` on success is the MAX of the GCI and the raw
+    finest-level gap: a fortuitously small GCI can never shrink the claimed band
+    below the difference actually observed between the two finest levels.
+
+    These bands are what any cross-code tolerance must respect. A threshold
+    tighter than a code's own discretization uncertainty is not a physics test.
+
+    Examples
+    --------
+    A synthetic second-order series ``f(h) = 1 + 4h**2``:
+
+    >>> r = richardson([1 + 4 * h ** 2 for h in (4.0, 2.0, 1.0)], [4.0, 2.0, 1.0])
+    >>> r["status"], round(r["observed_order"], 6), round(r["extrapolated"], 6)
+    ('OK', 2.0, 1.0)
+
+    A missing level is reported, never silently dropped:
+
+    >>> richardson([1.0, None, 2.0], [4.0, 2.0, 1.0])["status"]
+    'INSUFFICIENT_LEVELS'
+
+    A non-monotone ladder still carries a conservative band:
+
+    >>> bad = richardson([1.0, 2.0, 1.5], [4.0, 2.0, 1.0])
+    >>> bad["status"], round(bad["U_obs"], 4)
+    ('NON_MONOTONE', 0.6667)
     """
     vals = [None if v is None else float(v) for v in values]
     hs = [float(h) for h in h_values]
@@ -383,11 +833,33 @@ def _device_and_frame():
 
 
 def committed_d_int_fftorder() -> np.ndarray:
-    """D_int in FFT-bin order, taken from the committed cross-check artifact.
+    """Load D_int in FFT-bin order from the committed cross-check artifact.
 
-    A1 requires the substep ladder to drive exactly the committed problem, so
-    the dispersion array comes from the committed npz (stored mu-centred) rather
-    than being re-derived.
+    Returns
+    -------
+    numpy.ndarray
+        ``D_int(mu)`` [rad/s], shape ``(n_modes,)``, dtype ``float64``, in
+        FFT-bin order (the committed artifact stores it mu-centred, so it is
+        ``ifftshift``-ed here).
+
+    Raises
+    ------
+    FileNotFoundError
+        If ``validation/results/pylle_crosscheck_fields.npz`` is absent.
+    KeyError
+        If that archive has no ``d_int_rad_per_s`` array.
+
+    Notes
+    -----
+    The ladder must drive EXACTLY the committed problem, so the dispersion
+    array is read from the committed artifact rather than re-derived from the
+    CSV. Re-deriving would make a change to the loader silently change the
+    problem the convergence study is characterizing, and the study's whole claim
+    is that only the integrator varied between levels.
+
+    No ``Examples`` section: it reads a committed multi-megabyte artifact, and
+    the array's identity is pinned by the cross-check freeze rather than by a
+    doctest.
     """
     with np.load(COMMITTED_FIELDS) as z:
         return np.fft.ifftshift(np.asarray(z["d_int_rad_per_s"], dtype=float))
@@ -395,8 +867,46 @@ def committed_d_int_fftorder() -> np.ndarray:
 
 def build_seed(n_modes: int, dw: float, dev: dict, kappa: float,
                d2_local: float) -> np.ndarray:
-    """Deterministic sech-on-lower-CW-branch seed (reused verbatim from the
-    cross-check module so the two harnesses cannot drift apart)."""
+    """Build the deterministic sech-on-lower-CW-branch initial field.
+
+    Parameters
+    ----------
+    n_modes : int
+        Number of modes (and fast-time samples); odd.
+    dw : float
+        Detuning ``omega_res - omega_pump`` [rad/s] the seed is built at.
+    dev : dict
+        Device parameters, supplying ``kappa_c_rad_per_s`` [rad/s],
+        ``gamma_LLE_per_J_per_s`` [J^-1 s^-1] and ``pin_w`` [W].
+    kappa : float
+        Total loss rate [rad/s].
+    d2_local : float
+        Local second-order dispersion ``D_2`` [rad/s**2] at the pump, which
+        sets the seed soliton's width.
+
+    Returns
+    -------
+    numpy.ndarray
+        Shape ``(n_modes,)``, dtype ``complex128``, units sqrt(J): a sech pulse
+        sitting on the lower CW branch.
+
+    Raises
+    ------
+    ValueError
+        Propagated from
+        :func:`~validation.pylle_crosscheck.soliton_seed` for a
+        non-positive ``d2_local`` or an operating point with no lower branch.
+
+    Notes
+    -----
+    Delegates to the cross-check module's ``soliton_seed`` VERBATIM rather than
+    reimplementing it, so the two harnesses cannot drift apart. A convergence
+    study seeded differently from the cross-check would be characterizing a
+    different trajectory and its uncertainty bands would not transfer.
+
+    No ``Examples`` section: it imports the cross-check module, which pulls in
+    the full device configuration.
+    """
     from validation.pylle_crosscheck import soliton_seed
     return soliton_seed(n_modes, dw, kappa, dev["kappa_c_rad_per_s"],
                         dev["gamma_LLE_per_J_per_s"], dev["pin_w"], d2_local)
@@ -404,7 +914,54 @@ def build_seed(n_modes: int, dw: float, dev: dict, kappa: float,
 
 def run_level(op: OperatingPoint, n_substeps: int, d_int_fftorder, dev, *,
               fine_cadence_M: int = 1) -> dict:
-    """Run the solver at one refinement level; return the final field and timing."""
+    """Run the solver at one refinement level and return the final field.
+
+    Parameters
+    ----------
+    op : OperatingPoint
+        The operating point: mode count, ramp and derived config.
+    n_substeps : int
+        Strang sub-steps per round trip [dimensionless] -- the refinement knob.
+    d_int_fftorder : numpy.ndarray
+        ``D_int(mu)`` [rad/s], shape ``(n_modes,)``, in FFT-bin order.
+    dev : dict
+        Device parameters (``pin_w`` [W], ``kappa_c_rad_per_s`` [rad/s],
+        ``kappa_i_rad_per_s`` [rad/s], ``gamma_LLE_per_J_per_s``
+        [J^-1 s^-1]).
+    fine_cadence_M : int, optional
+        Fine-cadence factor [dimensionless], default 1. Keyword-only.
+
+    Returns
+    -------
+    dict
+        ``field`` (n_modes,) complex128 [sqrt(J)], ``n_substeps``, ``h``
+        (``1/n_substeps``, dimensionless), ``wall_s`` [s] and the ``seed``
+        field used.
+
+    Raises
+    ------
+    AssertionError
+        If ``delta_omega_eff`` deviates from the programmed ramp by more than
+        1e-6 relative -- meaning the thermo-optic shift is NOT off and the run
+        is not solving the intended problem -- or if the final field contains
+        non-finite values.
+
+    Notes
+    -----
+    Every stochastic channel is off and the dispersion comes from
+    ``d_int_grid``, so ``beta`` and ``rng_key`` are passed but unused. The
+    detuning ramp and the seed are identical at every level: the ONLY thing
+    that changes across the ladder is ``n_substeps``, which is what makes the
+    successive differences attributable to the integrator.
+
+    The effective-detuning assertion mirrors the one in
+    :func:`~validation.pylle_crosscheck.run_ours`, deliberately: a thermal
+    shift leaking into the ramp is the failure mode that would make two codes
+    disagree for a reason neither of them is wrong about.
+
+    No ``Examples`` section: one level is a 5000-round-trip solve on a
+    6601-mode grid.
+    """
     import jax
     from simulator.lle_solver import solve_lle_ssfm_jax
     from simulator.noise_config import NoiseConfig
@@ -457,7 +1014,48 @@ def run_level(op: OperatingPoint, n_substeps: int, d_int_fftorder, dev, *,
 # ===========================================================================
 def dispersion_context(d_int_fftorder: np.ndarray, mu: np.ndarray, t_r: float,
                        dw_final: float) -> dict:
-    """D7 phase budget, R4 provenance mask, and the DW phase-matching roots."""
+    """Report the phase budget, the extrapolated-mode mask and the DW roots.
+
+    Parameters
+    ----------
+    d_int_fftorder : numpy.ndarray
+        ``D_int(mu)`` [rad/s], shape ``(n_modes,)``, in FFT-bin order.
+    mu : numpy.ndarray
+        Mode numbers [dimensionless], shape ``(n_modes,)``, mu-centred.
+    t_r : float
+        Round-trip time [s].
+    dw_final : float
+        Detuning at the operating point [rad/s].
+
+    Returns
+    -------
+    dict
+        ``max_abs_Dint_t_r_rad`` [rad] and ``n_modes_Dint_tr_over_pi`` /
+        ``min_abs_mu_Dint_tr_over_pi`` -- the per-round-trip linear-phase
+        budget; ``dispersion_fully_measured`` and ``modes_extrapolated``
+        (count, mu range, and the CSV's own mu range) -- which modes are
+        measured and which are extrapolated; and
+        ``phase_matching_roots_far`` [mode numbers] -- the sign changes of
+        ``D_int(mu) - delta_omega`` beyond ``|mu| > 1500``.
+
+    Raises
+    ------
+    OSError
+        If the dispersion CSV cannot be read.
+    IndexError
+        If ``mu`` and ``d_int_fftorder`` have different lengths.
+
+    Notes
+    -----
+    Context, not a gate. The phase budget says how far the discrete map is from
+    the regime where spurious four-wave mixing phase-matches; the extrapolated
+    mask says which part of the answer rests on measured dispersion and which
+    on a linear continuation past the end of the CSV; the phase-matching roots
+    say where a dispersive wave is expected, so that finding one there is a
+    prediction confirmed rather than a feature noticed after the fact.
+
+    No ``Examples`` section: it reads the committed dispersion CSV.
+    """
     d_nat = np.fft.fftshift(d_int_fftorder)
     phase = np.abs(d_nat) * t_r
     over = phase > math.pi
@@ -499,6 +1097,56 @@ def _git(*args) -> str:
 
 def build_provenance(argv, op: OperatingPoint, dev, d1, fsr_used, t_r, seed,
                      overrides: dict, wall_total: float) -> dict:
+    """Assemble the provenance record stored beside a study's results.
+
+    Parameters
+    ----------
+    argv : sequence of str
+        The command line the study was invoked with.
+    op : OperatingPoint
+        The operating point, including the derived config path.
+    dev : dict
+        Device parameters as resolved for the run.
+    d1 : float
+        Fitted ``D_1`` [rad/s].
+    fsr_used : float
+        ``D_1/(2*pi)`` [Hz] -- the FSR the run actually used, which may differ
+        from the config's nominal value.
+    t_r : float
+        Round-trip time ``1/fsr_used`` [s].
+    seed : numpy.ndarray
+        The initial field [sqrt(J)], hashed into the record.
+    overrides : dict
+        Config leaves overridden to build the derived config.
+    wall_total : float
+        Total wall-clock time of the study [s].
+
+    Returns
+    -------
+    dict
+        Git commit, dirty flag and branch; the argv; the resolved
+        ``physical_parameters`` with the derived and source config paths and
+        the overridden leaves; the solver flags; library versions; content
+        hashes of the seed and dispersion arrays; and the schema version.
+
+    Raises
+    ------
+    OSError
+        If the derived config cannot be read.
+    KeyError
+        If that config has no ``physical_parameters`` block.
+    ImportError
+        If JAX, SciPy or PyYAML is unavailable.
+
+    Notes
+    -----
+    Records ``fsr_used`` alongside the config because they can legitimately
+    differ: the frame is set by the CSV-fitted ``D_1``, not by the config's
+    nominal FSR, and a reader reconciling a result a year later needs to know
+    which one the run was in.
+
+    No ``Examples`` section: it shells out to git and imports JAX.
+    """
     import jax
     import scipy
     import yaml
@@ -560,7 +1208,68 @@ def study(op: OperatingPoint, levels=(1, 2, 4, 8, 16, 32), *,
           grid_levels=(3300, 4400, 5500), grid_nsub: int = 8,
           band=DW_BAND_DEFAULT, max_seconds: float = 1800.0,
           argv=None, check_regression: bool = True) -> dict:
-    """Run the substep ladder and the grid ladder; assemble the full result."""
+    """Run the substep and grid ladders and assemble the full result.
+
+    Parameters
+    ----------
+    op : OperatingPoint
+        The operating point to characterize.
+    levels : sequence of int, optional
+        Sub-step refinement ladder [dimensionless], default
+        ``(1, 2, 4, 8, 16, 32)``.
+    grid_levels : sequence of int, optional
+        Mode-grid half-widths ``mu_half`` [mode numbers] for the spectral
+        ladder, default ``(3300, 4400, 5500)``. Keyword-only.
+    grid_nsub : int, optional
+        Sub-steps held fixed during the grid ladder [dimensionless], default 8.
+        Keyword-only.
+    band : tuple of int, optional
+        Dispersive-wave band [mode numbers], default :data:`DW_BAND_DEFAULT`.
+        Keyword-only.
+    max_seconds : float, optional
+        Per-level wall-clock budget [s], default 1800.0. A level that exceeds
+        it is marked ``TIMEOUT`` and still reported. Keyword-only.
+    argv : sequence of str or None, optional
+        Command line recorded in the provenance. Keyword-only.
+    check_regression : bool, optional
+        Also compare the ``n_substeps = 1`` level against the committed
+        cross-check field, default ``True``. Keyword-only.
+
+    Returns
+    -------
+    result : dict
+        The full report: per-level records with their observables, the
+        Richardson study per observable in :data:`CONVERGED_OBSERVABLES`, the
+        dispersion context, the regression check and the provenance.
+    fields : dict of str to numpy.ndarray
+        Final field per level [sqrt(J)], keyed ``field_nsub<N>``.
+    arrays : dict of str to numpy.ndarray
+        ``mu``, ``d_int_rad_per_s`` [rad/s] and the ``seed`` field [sqrt(J)].
+
+    Raises
+    ------
+    AssertionError
+        Propagated from :func:`run_level` -- a level whose effective detuning
+        left the programmed ramp, or whose field went non-finite, aborts the
+        study rather than being recorded as one more data point.
+    FileNotFoundError
+        If the committed artifacts needed for the dispersion or the regression
+        check are absent.
+
+    Notes
+    -----
+    Two ladders, because there are two discretizations: the sub-step ladder
+    refines the integrator at fixed grid, and the grid ladder refines the
+    spectral resolution at fixed sub-step. An observable is only claimed
+    converged when both say so.
+
+    Any exception from a level OTHER than the two assertions is recorded as an
+    ``ERROR`` status for that level and the ladder continues -- a study that
+    aborted on one bad level would throw away the levels that did run, and
+    those are what bound the uncertainty.
+
+    No ``Examples`` section: the default ladders run nine full solves.
+    """
     from simulator.lle_solver import load_dint_grid
 
     t_start = time.time()
@@ -726,6 +1435,40 @@ OPERATING_POINTS = {
 
 
 def main(argv=None) -> int:
+    """Run the discretization-uncertainty study from the command line.
+
+    Parameters
+    ----------
+    argv : sequence of str or None, optional
+        Command-line arguments; ``None`` (default) reads ``sys.argv[1:]``.
+        Supports ``--operating-point``, ``--levels``, ``--grid-levels``,
+        ``--grid-nsub``, ``--dw-band``, ``--max-seconds``,
+        ``--no-regression-check`` and ``--out-tag``.
+
+    Returns
+    -------
+    int
+        The process exit status: 0 when the study completed and its regression
+        check passed, non-zero otherwise.
+
+    Raises
+    ------
+    SystemExit
+        From ``argparse`` on a malformed command line or ``--help``.
+    AssertionError
+        Propagated from :func:`study` when a level left the programmed ramp or
+        produced a non-finite field.
+
+    Notes
+    -----
+    Writes ``validation/results/convergence_lle_<tag>.json`` and
+    ``..._fields.npz``. Those artifacts are the source of the uncertainty bands
+    that :mod:`validation.criteria` derives its GATED tolerances from, so
+    re-running this study is a provenance-recorded event rather than routine
+    maintenance.
+
+    No ``Examples`` section: every path runs the full ladders.
+    """
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--operating-point", default="dw30k", choices=sorted(OPERATING_POINTS))
     ap.add_argument("--levels", default="1,2,4,8,16,32")

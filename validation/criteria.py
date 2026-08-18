@@ -131,12 +131,71 @@ TOLERANCES_V1_HISTORICAL = {
 
 
 class CriterionClass(str, Enum):
+    """How much authority a criterion's verdict carries.
+
+    Attributes
+    ----------
+    HARD
+        Must hold for ANY correct solver, independent of the other code.
+        Its threshold is a property of the mathematics, not of an agreement.
+    GATED
+        A cross-code AGREEMENT claim, and therefore meaningful only to the
+        precision both codes actually resolve. Its tolerance is DERIVED from
+        the two measured uncertainty studies, never chosen.
+    DIAGNOSTIC
+        Reported, never decisive. Structurally excluded from ``overall``.
+
+    Notes
+    -----
+    Subclasses ``str`` so a member serialises straight into JSON as its own
+    value and a report can be read without the enum being importable.
+
+    Examples
+    --------
+    >>> CriterionClass.HARD.value
+    'HARD'
+    >>> CriterionClass.GATED == "GATED"
+    True
+    """
+
     HARD = "HARD"
     GATED = "GATED"
     DIAGNOSTIC = "DIAGNOSTIC"
 
 
 class Verdict(str, Enum):
+    """The outcome of evaluating one criterion.
+
+    Attributes
+    ----------
+    PASS
+        Measured and within threshold or tolerance.
+    FAIL
+        Measured and outside it.
+    NOT_MEASURED
+        The value was absent or NaN. Treated as a failure of the run, not as a
+        silent skip: an unmeasured criterion is not a satisfied one.
+    UNDERIVED
+        A GATED criterion whose tolerance could not be derived from the
+        uncertainty studies. Demoted to diagnostic and reported as a
+        QUALIFICATION on the overall verdict rather than given a guessed
+        number.
+    DIAGNOSTIC
+        Carries data only and can never change ``overall``.
+
+    Notes
+    -----
+    Subclasses ``str`` for the same JSON-serialisation reason as
+    :class:`CriterionClass`.
+
+    Examples
+    --------
+    >>> Verdict.PASS.value, Verdict.UNDERIVED.value
+    ('PASS', 'UNDERIVED')
+    >>> sorted(VERDICTS)
+    ['DIAGNOSTIC', 'FAIL', 'NOT_MEASURED', 'PASS', 'UNDERIVED']
+    """
+
     PASS = "PASS"
     FAIL = "FAIL"
     NOT_MEASURED = "NOT_MEASURED"
@@ -148,7 +207,21 @@ VERDICTS = {v.value for v in Verdict}
 
 
 class CriteriaError(RuntimeError):
-    """Raised on a fingerprint mismatch or a malformed report."""
+    """Raised on a tolerance-fingerprint mismatch or a malformed report.
+
+    Notes
+    -----
+    A distinct exception type rather than a bare ``RuntimeError`` because the
+    two conditions it signals -- a tolerance edited after derivation, and a
+    report that does not satisfy its own schema -- are process failures rather
+    than physics failures, and a caller may reasonably want to catch exactly
+    those.
+
+    Examples
+    --------
+    >>> issubclass(CriteriaError, RuntimeError)
+    True
+    """
 
 
 # ==========================================================================
@@ -156,6 +229,60 @@ class CriteriaError(RuntimeError):
 # ==========================================================================
 @dataclass(frozen=True)
 class Criterion:
+    """One acceptance criterion, declared as DATA rather than as a code path.
+
+    Parameters
+    ----------
+    cid : str
+        Stable identifier, e.g. ``"H1"``, ``"G4"``, ``"D7"``.
+    name : str
+        Machine-readable name, matching the key the measured value arrives
+        under.
+    cls : CriterionClass
+        HARD, GATED or DIAGNOSTIC.
+    quantity : str
+        Human-readable statement of what is being compared.
+    comparison : str
+        How it is compared: ``"threshold"``, ``"bool"``, ``"relative"``,
+        ``"absolute"``, ``"bracket"`` or ``"report"``.
+    ours_key : str or None, optional
+        Key of this repository's measured value.
+    pylle_key : str or None, optional
+        Key of the reference code's measured value.
+    conv_key : str or None, optional
+        Observable name in BOTH convergence studies, from which a GATED
+        tolerance is derived. A GATED criterion without one derives its own
+        scale (G7 does, from the bracket half-widths).
+    units : str, optional
+        Units of the compared quantity, e.g. ``"relative"``, ``"modes"``,
+        ``"dB"``, ``"W"``. Default ``"-"``.
+    note : str, optional
+        Why the criterion is classified as it is, carried into the report.
+
+    Raises
+    ------
+    dataclasses.FrozenInstanceError
+        On any attempt to mutate an instance.
+
+    Notes
+    -----
+    Declaring the criteria as a frozen table rather than as a sequence of
+    ``if`` statements is acceptance criterion A1 of the cross-check: the set of
+    things being checked is then inspectable, diffable and countable, and a
+    criterion cannot be quietly weakened by editing the branch that evaluates
+    it.
+
+    Examples
+    --------
+    >>> h1 = CRITERIA_BY_ID["H1"]
+    >>> h1.cls.value, h1.comparison, h1.units
+    ('HARD', 'threshold', 'relative')
+    >>> len(HARD_IDS), len(GATED_IDS), len(DIAGNOSTIC_IDS)
+    (7, 7, 7)
+    >>> set(CRITERIA_BY_ID) == set(HARD_IDS + GATED_IDS + DIAGNOSTIC_IDS)
+    True
+    """
+
     cid: str
     name: str
     cls: CriterionClass
@@ -276,14 +403,85 @@ DERIVED_GATED_IDS = tuple(c.cid for c in CRITERIA
 # Numerical helpers
 # ==========================================================================
 def rel(a: float, b: float) -> float:
-    """|a-b| / max(|a|,|b|), and exactly 0 when both are 0."""
+    """Return the symmetric relative difference between two values.
+
+    Parameters
+    ----------
+    a, b : float
+        The two values, in any consistent unit.
+
+    Returns
+    -------
+    float
+        ``|a - b| / max(|a|, |b|)`` [dimensionless], and exactly 0.0 when both
+        are zero.
+
+    Raises
+    ------
+    TypeError
+        If either argument cannot be coerced to ``float``.
+
+    Notes
+    -----
+    Symmetric by construction -- neither value is privileged as "the
+    reference", which is the right choice for a cross-code comparison where
+    both codes are on trial. The both-zero case returns 0.0 rather than
+    ``nan``, so an observable that is legitimately zero in both codes reads as
+    agreement.
+
+    Examples
+    --------
+    >>> rel(1.0, 1.0), rel(0.0, 0.0)
+    (0.0, 0.0)
+    >>> rel(2.0, 1.0)
+    0.5
+    >>> rel(1.0, 2.0) == rel(2.0, 1.0)          # symmetric
+    True
+    """
     a, b = float(a), float(b)
     denom = max(abs(a), abs(b))
     return 0.0 if denom == 0.0 else abs(a - b) / denom
 
 
 def combine(u_a: float, u_b: float, k: float = COVERAGE_FACTOR) -> float:
-    """Coverage-scaled quadrature sum of two uncertainties."""
+    """Combine two independent uncertainties into a coverage-scaled tolerance.
+
+    Parameters
+    ----------
+    u_a, u_b : float
+        The two numerical uncertainties, in the same unit (relative or
+        absolute, but not mixed).
+    k : float, optional
+        Coverage factor [dimensionless], default :data:`COVERAGE_FACTOR`
+        (2.0) -- a two-sigma-style coverage on the combined uncertainty.
+
+    Returns
+    -------
+    float
+        ``k * sqrt(u_a**2 + u_b**2)``, in the unit of the inputs.
+
+    Raises
+    ------
+    TypeError
+        If any argument cannot be coerced to ``float``.
+
+    Notes
+    -----
+    Quadrature because the two discretization uncertainties are independent:
+    they come from two codes whose truncation errors have no reason to be
+    correlated. This is the whole basis of the GATED tolerances -- they are
+    computed from what each code measured about itself, so a tolerance can
+    never be tightened past the precision either code actually resolves.
+
+    Examples
+    --------
+    >>> round(combine(3e-3, 4e-3), 6)          # 2 * sqrt(9 + 16) * 1e-3
+    0.01
+    >>> combine(0.0, 0.0)
+    0.0
+    >>> bool(combine(1e-3, 1e-3, k=1.0) < combine(1e-3, 1e-3, k=2.0))
+    True
+    """
     return k * math.sqrt(float(u_a) ** 2 + float(u_b) ** 2)
 
 
@@ -304,6 +502,69 @@ def _git(*args: str) -> str:
 # ==========================================================================
 @dataclass
 class DerivedTolerance:
+    """One GATED criterion's tolerance, together with how it was derived.
+
+    Parameters
+    ----------
+    cid : str
+        Criterion identifier.
+    name : str
+        Criterion name.
+    tolerance : float or None
+        The derived tolerance, relative [dimensionless] or absolute (units of
+        the observable, e.g. modes for G5). ``None`` when ``status`` is
+        ``"UNDERIVED"``.
+    status : {'DERIVED', 'UNDERIVED'}
+        Whether a tolerance could be computed from the two uncertainty
+        studies.
+    kind : {'relative', 'absolute'}
+        How ``tolerance`` is to be applied.
+    u_ours : float or None, optional
+        This repository's measured numerical uncertainty for the observable.
+    u_pylle : float or None, optional
+        The reference code's, from its own refinement study.
+    coverage_factor : float, optional
+        The ``k`` used in :func:`combine`, default :data:`COVERAGE_FACTOR`.
+    floor : float or None, optional
+        Lower bound applied to the derived tolerance, so a study that happened
+        to measure an implausibly small uncertainty cannot produce a tolerance
+        no correct code could meet.
+    reason : str, optional
+        Why the tolerance is UNDERIVED, when it is.
+    source_ours, source_pylle : dict, optional
+        The provenance of each uncertainty: which study, which level, which
+        status it carried.
+
+    Raises
+    ------
+    TypeError
+        From dataclass construction if ``cid``, ``name``, ``tolerance``,
+        ``status`` or ``kind`` is omitted.
+
+    Notes
+    -----
+    Mutable by design, unlike :class:`Criterion`: it is built during
+    derivation. What must not change afterwards is guarded by the fingerprint
+    rather than by immutability, because the fingerprint covers exactly the
+    numbers verdicts are measured against and nothing else.
+
+    Examples
+    --------
+    >>> t = DerivedTolerance(cid="G1", name="peak_power", tolerance=0.01,
+    ...                      status="DERIVED", kind="relative",
+    ...                      u_ours=3e-3, u_pylle=4e-3)
+    >>> t.tolerance, t.kind, t.coverage_factor
+    (0.01, 'relative', 2.0)
+
+    An underivable tolerance is recorded as such, never guessed:
+
+    >>> u = DerivedTolerance(cid="G6", name="comb_frac", tolerance=None,
+    ...                      status="UNDERIVED", kind="relative",
+    ...                      reason="pyLLE study has no such observable")
+    >>> u.tolerance is None and u.status == "UNDERIVED"
+    True
+    """
+
     cid: str
     name: str
     tolerance: float | None
@@ -320,14 +581,113 @@ class DerivedTolerance:
 
 @dataclass
 class ToleranceSet:
+    """Every derived tolerance, fingerprinted before any comparison value is read.
+
+    Parameters
+    ----------
+    entries : dict of str to DerivedTolerance
+        One entry per GATED criterion, keyed by ``cid``.
+    fingerprint : str
+        ``sha256`` over the ``(criterion -> tolerance)`` mapping ONLY, taken at
+        derivation time.
+    provenance : dict
+        Which study files the uncertainties came from, their hashes, the git
+        state and the argv.
+
+    Raises
+    ------
+    TypeError
+        From dataclass construction if a field is omitted.
+
+    Notes
+    -----
+    The fingerprint is the mechanical form of "no post-hoc tolerance tuning".
+    It is computed BEFORE any comparison value exists and re-computed in
+    :func:`build_report`; if a tolerance moved in between, the report refuses
+    to build. It deliberately covers only the tolerances -- not the
+    uncertainties or the provenance -- because those may legitimately be
+    annotated afterwards, while the numbers verdicts are measured against may
+    not.
+
+    Examples
+    --------
+    >>> entries = {"G1": DerivedTolerance(cid="G1", name="peak_power",
+    ...                                   tolerance=0.01, status="DERIVED",
+    ...                                   kind="relative")}
+    >>> tolset = ToleranceSet(entries=entries,
+    ...                       fingerprint=_fingerprint(entries),
+    ...                       provenance={})
+    >>> tolset.tol("G1"), tolset.is_derived("G1")
+    (0.01, True)
+    >>> len(tolset.fingerprint)
+    64
+    """
+
     entries: dict[str, DerivedTolerance]
     fingerprint: str
     provenance: dict[str, Any]
 
     def tol(self, cid: str) -> float | None:
+        """Return the tolerance for one criterion.
+
+        Parameters
+        ----------
+        cid : str
+            Criterion identifier.
+
+        Returns
+        -------
+        float or None
+            The derived tolerance, or ``None`` if it is UNDERIVED.
+
+        Raises
+        ------
+        KeyError
+            If ``cid`` is not in this set -- a missing tolerance is an error,
+            never a permissive default.
+
+        Examples
+        --------
+        >>> entries = {"G1": DerivedTolerance(cid="G1", name="peak_power",
+        ...                                   tolerance=0.01, status="DERIVED",
+        ...                                   kind="relative")}
+        >>> ToleranceSet(entries, _fingerprint(entries), {}).tol("G1")
+        0.01
+        """
         return self.entries[cid].tolerance
 
     def is_derived(self, cid: str) -> bool:
+        """Whether a criterion's tolerance was successfully derived.
+
+        Parameters
+        ----------
+        cid : str
+            Criterion identifier.
+
+        Returns
+        -------
+        bool
+            ``True`` iff the entry's ``status`` is ``"DERIVED"``.
+
+        Raises
+        ------
+        KeyError
+            If ``cid`` is not in this set.
+
+        Notes
+        -----
+        :func:`evaluate_gated` uses this to demote an underivable criterion to
+        DIAGNOSTIC rather than evaluating it against a guessed number.
+
+        Examples
+        --------
+        >>> entries = {"G6": DerivedTolerance(cid="G6", name="comb_frac",
+        ...                                   tolerance=None,
+        ...                                   status="UNDERIVED",
+        ...                                   kind="relative")}
+        >>> ToleranceSet(entries, _fingerprint(entries), {}).is_derived("G6")
+        False
+        """
         return self.entries[cid].status == "DERIVED"
 
 
@@ -397,8 +757,54 @@ def derive_tolerances(ours_path: Path | str | None = None,
                       argv: list[str] | None = None) -> ToleranceSet:
     """Derive every GATED tolerance from the two measured convergence studies.
 
-    Called BEFORE any comparison value is read; the returned fingerprint is what
-    :func:`evaluate` re-checks.
+    Parameters
+    ----------
+    ours_path : pathlib.Path or str or None, optional
+        This repository's convergence study; ``None`` (default) uses
+        ``validation/results/convergence_lle_dw30k.json``.
+    pylle_path : pathlib.Path or str or None, optional
+        The reference code's refinement study; ``None`` (default) uses
+        ``validation/results/pylle_refinement_dw30k.json``.
+    ours_level : str, optional
+        Which uncertainty to read from our study, default
+        ``"numerical_uncertainty_at_n1"`` -- the band at the level the
+        comparison was actually run at. Keyword-only.
+    pylle_tag : str, optional
+        Which refinement tag to read from the reference study, default
+        ``"tight"``. Keyword-only.
+    argv : list of str or None, optional
+        Command line recorded in the provenance. Keyword-only.
+
+    Returns
+    -------
+    ToleranceSet
+        One :class:`DerivedTolerance` per criterion in
+        :data:`DERIVED_GATED_IDS`, the fingerprint taken over them, and the
+        provenance of both source studies.
+
+    Raises
+    ------
+    FileNotFoundError
+        If either study file is absent.
+    json.JSONDecodeError
+        If either is not valid JSON.
+    KeyError
+        If a criterion in :data:`DERIVED_GATED_IDS` has no floor declared in
+        :data:`FLOOR_TOL_RELATIVE` or :data:`FLOOR_TOL_ABSOLUTE_MODES`.
+
+    Notes
+    -----
+    Must be called BEFORE any comparison value is read; the returned
+    fingerprint is what :func:`build_report` re-checks. That ordering is the
+    whole guarantee: a tolerance derived after seeing a result is not a
+    tolerance, it is a decision.
+
+    A criterion whose uncertainty could not be measured in BOTH studies gets no
+    tolerance at all and is marked UNDERIVED, carrying the reason from each
+    side. It is then demoted rather than given a plausible number -- an
+    agreement claim at a tolerance nobody measured is not evidence.
+
+    No ``Examples`` section: it reads the two committed study artifacts.
     """
     ours_path = Path(ours_path or RESULTS_DIR / "convergence_lle_dw30k.json")
     pylle_path = Path(pylle_path or RESULTS_DIR / "pylle_refinement_dw30k.json")
@@ -506,7 +912,56 @@ def _result(cid: str, verdict: Verdict, **kw) -> dict:
 
 
 def evaluate_hard(values: dict) -> list[dict]:
-    """Evaluate the HARD checks from a flat dict of measured values."""
+    """Evaluate the HARD checks from a flat dict of measured values.
+
+    Parameters
+    ----------
+    values : dict
+        Measured values keyed by criterion ``name``. Units follow the
+        criterion: ``parameter_round_trip_max_rel`` and
+        ``dispersion_refit_max_rel`` are relative [dimensionless],
+        ``pump_mode_reference_delta_hz`` is in Hz, and
+        ``dispersion_mirror_applied`` / ``seed_arrays_identical`` are booleans.
+
+    Returns
+    -------
+    list of dict
+        One result per HARD criterion, in :data:`HARD_IDS` order, each with
+        ``cid``, ``name``, ``class``, ``quantity``, ``verdict`` and the
+        measured ``value`` (plus ``threshold`` where one applies).
+
+    Raises
+    ------
+    KeyError
+        If a criterion id is missing from :data:`CRITERIA_BY_ID`.
+    TypeError
+        If a supplied value is not numeric where a threshold comparison
+        expects one.
+
+    Notes
+    -----
+    HARD criteria are gated on thresholds that are properties of the
+    MATHEMATICS, not of an agreement: an exact algebraic round trip must invert
+    to 1e-12, and the pump-mode reference must match the CSV resonance
+    EXACTLY (0.0 Hz), because there is no tolerance at which being on the wrong
+    mode is acceptable.
+
+    A missing or NaN value yields ``NOT_MEASURED``, which
+    :func:`overall_verdict` counts as a failure. Silence is not a pass.
+
+    Examples
+    --------
+    >>> results = evaluate_hard({"parameter_round_trip_max_rel": 0.0})
+    >>> len(results) == len(HARD_IDS)
+    True
+    >>> results[0]["cid"], results[0]["verdict"], results[0]["threshold"]
+    ('H1', 'PASS', 1e-12)
+
+    An absent measurement is reported, not skipped:
+
+    >>> evaluate_hard({})[0]["verdict"]
+    'NOT_MEASURED'
+    """
     res = []
 
     def thresh(cid, key):
@@ -544,7 +999,42 @@ def evaluate_hard(values: dict) -> list[dict]:
 
 
 def evaluate_gated(values: dict, tolset: ToleranceSet) -> list[dict]:
-    """Evaluate the GATED checks. UNDERIVED tolerances demote to DIAGNOSTIC."""
+    """Evaluate the GATED cross-code checks against their derived tolerances.
+
+    Parameters
+    ----------
+    values : dict
+        Measured values keyed ``"<ours_key>__ours"`` and
+        ``"<pylle_key>__pylle"``. Units follow each criterion -- W for peak
+        power, modes for spans and centroids, dB for relative powers.
+    tolset : ToleranceSet
+        Tolerances from :func:`derive_tolerances`.
+
+    Returns
+    -------
+    list of dict
+        One result per criterion in :data:`DERIVED_GATED_IDS`, carrying both
+        measured values, both uncertainties, the coverage factor, the tolerance
+        and its kind and status, the provenance of each uncertainty, and the
+        verdict.
+
+    Raises
+    ------
+    KeyError
+        If ``tolset`` has no entry for a criterion in
+        :data:`DERIVED_GATED_IDS`.
+
+    Notes
+    -----
+    A criterion whose tolerance is UNDERIVED is reported with verdict
+    ``UNDERIVED`` and does not fail the run; it QUALIFIES it instead, via
+    :func:`overall_verdict`. That is the deliberate middle path between
+    failing a run for a tolerance nobody could derive and quietly passing it
+    against a guessed one.
+
+    No ``Examples`` section: a meaningful call needs a full
+    :class:`ToleranceSet` derived from the two committed study artifacts.
+    """
     res = []
     for cid in DERIVED_GATED_IDS:
         c = CRITERIA_BY_ID[cid]
@@ -603,6 +1093,52 @@ def evaluate_existence_edges(values: dict, tolset: ToleranceSet,
     test asserts that. Supplying it is a measurement being added to the band,
     never a tolerance being widened to obtain a pass: the value comes from
     ``existence_convergence_ours.json`` and nowhere else.
+
+    Parameters
+    ----------
+    values : dict
+        Measured values, read as ``existence_<edge>_bracket_ours`` and
+        ``existence_<edge>_bracket_pylle`` for ``edge`` in ``lower``,
+        ``upper``. Brackets are in units of ``kappa`` [dimensionless].
+    tolset : ToleranceSet
+        The derived tolerances, for the coverage factor and provenance.
+    discretization_u : dict or None, optional
+        Optional ``{edge: U_disc}`` mapping [same units as the brackets], from
+        ``validation/existence_convergence.py``. ``None`` (default) reproduces
+        the original result bit-for-bit. Keyword-only.
+
+    Returns
+    -------
+    list of dict
+        One result per edge, carrying both brackets, their half-widths, the
+        combined band, the midpoint separation and the verdict.
+
+    Raises
+    ------
+    KeyError
+        If ``tolset`` lacks the entry this criterion reads.
+    TypeError
+        If a supplied bracket is not a two-element sequence.
+
+    Notes
+    -----
+    Brackets, not points -- and that distinction is the whole criterion. A
+    bisection resolves an INTERVAL; reporting its tightest surviving point as
+    "the edge" is a biased estimator, and comparing two such points across
+    codes compares two biases.
+
+    Examples
+    --------
+    The bracket algebra this criterion rests on:
+
+    >>> lower_ours, lower_pylle = (2.1, 2.3), (2.2, 2.5)
+    >>> overlap = (lower_ours[0] <= lower_pylle[1]
+    ...            and lower_pylle[0] <= lower_ours[1])
+    >>> overlap                       # overlapping brackets agree outright
+    True
+    >>> half_width = (lower_ours[1] - lower_ours[0]) / 2
+    >>> round(half_width, 4)
+    0.1
     """
     out = []
     for edge in ("lower", "upper"):
@@ -637,7 +1173,47 @@ def evaluate_existence_edges(values: dict, tolset: ToleranceSet,
 
 
 def evaluate_diagnostics(values: dict) -> list[dict]:
-    """DIAGNOSTIC results carry data only and can never change ``overall``."""
+    """Collect the DIAGNOSTIC results, which carry data only.
+
+    Parameters
+    ----------
+    values : dict
+        Measured values, read as ``diag_<criterion name>``. Units follow each
+        criterion -- counts, modes, radians.
+
+    Returns
+    -------
+    list of dict
+        One result per criterion in :data:`DIAGNOSTIC_IDS`, each with verdict
+        ``'DIAGNOSTIC'``, the raw ``data`` (``None`` when absent) and the
+        criterion's ``note``.
+
+    Raises
+    ------
+    KeyError
+        If a criterion id is missing from :data:`CRITERIA_BY_ID`.
+
+    Notes
+    -----
+    These never change ``overall`` -- :func:`overall_verdict` excludes them by
+    CLASS, before reading any verdict. That is what makes it safe to publish
+    ill-conditioned quantities such as the -60 dBc line count: they inform a
+    reader without ever deciding anything.
+
+    A missing diagnostic is recorded as ``None`` rather than omitted, so the
+    report's shape does not depend on which measurements happened to be
+    available.
+
+    Examples
+    --------
+    >>> results = evaluate_diagnostics({})
+    >>> len(results) == len(DIAGNOSTIC_IDS)
+    True
+    >>> {r["verdict"] for r in results}
+    {'DIAGNOSTIC'}
+    >>> results[0]["data"] is None
+    True
+    """
     out = []
     for cid in DIAGNOSTIC_IDS:
         c = CRITERIA_BY_ID[cid]
@@ -647,11 +1223,57 @@ def evaluate_diagnostics(values: dict) -> list[dict]:
 
 
 def overall_verdict(checks: list[dict]) -> tuple[str, bool, list[str]]:
-    """``overall`` from HARD + GATED only; DIAGNOSTIC is structurally excluded.
+    """Reduce a list of checks to a single verdict, its qualification and reasons.
 
-    Returns ``(overall, qualified, reasons)``. ``qualified`` is True when a GATED
-    check was demoted for want of a derivable tolerance -- the run is then not a
-    clean pass even if nothing failed, and says so.
+    Parameters
+    ----------
+    checks : list of dict
+        Results from :func:`evaluate_hard`, :func:`evaluate_gated`,
+        :func:`evaluate_existence_edges` and :func:`evaluate_diagnostics`.
+
+    Returns
+    -------
+    overall : str
+        ``'PASS'`` or ``'FAIL'``.
+    qualified : bool
+        ``True`` when at least one GATED check was demoted for want of a
+        derivable tolerance -- the run is then not a clean pass even though
+        nothing failed, and says so.
+    reasons : list of str
+        One line per failing or qualifying check, naming its id and name.
+
+    Raises
+    ------
+    KeyError
+        If a check dict is missing ``class`` or ``verdict``.
+
+    Notes
+    -----
+    DIAGNOSTIC results are excluded STRUCTURALLY -- by class, before the
+    verdict is even read -- rather than by their verdict value. A diagnostic
+    can therefore never change the outcome no matter what it reports, which is
+    the property that lets ill-conditioned observables be published alongside
+    the decisive ones without contaminating them.
+
+    ``NOT_MEASURED`` counts as a failure, deliberately: a criterion that was
+    never evaluated has not been satisfied.
+
+    Examples
+    --------
+    >>> overall_verdict([{"class": "HARD", "verdict": "PASS",
+    ...                   "cid": "H1", "name": "round_trip"}])
+    ('PASS', False, [])
+    >>> verdict, qualified, reasons = overall_verdict(
+    ...     [{"class": "HARD", "verdict": "FAIL",
+    ...       "cid": "H1", "name": "round_trip"}])
+    >>> verdict, qualified, reasons
+    ('FAIL', False, ['H1 round_trip: FAIL'])
+
+    A diagnostic cannot move the verdict:
+
+    >>> overall_verdict([{"class": "DIAGNOSTIC", "verdict": "DIAGNOSTIC",
+    ...                   "cid": "D1", "name": "line_count"}])
+    ('PASS', False, [])
     """
     reasons: list[str] = []
     failed = False
@@ -673,11 +1295,44 @@ def overall_verdict(checks: list[dict]) -> tuple[str, bool, list[str]]:
 
 def build_report(values: dict, tolset: ToleranceSet, *,
                  extra: dict | None = None) -> dict:
-    """Assemble the full v2 report and enforce the fingerprint guard.
+    """Assemble the full v2 report and enforce the tolerance-fingerprint guard.
 
+    Parameters
+    ----------
+    values : dict
+        Every measured value, keyed as the evaluators expect.
+    tolset : ToleranceSet
+        The tolerances derived BEFORE any of ``values`` was read.
+    extra : dict or None, optional
+        Additional top-level keys merged into the report. Keyword-only.
+
+    Returns
+    -------
+    dict
+        ``schema_version``, ``criteria_version``, ``tolerance_fingerprint``,
+        ``criteria_provenance``, ``tolerances``, ``checks``, ``overall``,
+        ``overall_qualified`` and ``overall_qualification_reasons``, plus
+        anything in ``extra``.
+
+    Raises
+    ------
+    CriteriaError
+        If the fingerprint recomputed here differs from the one recorded at
+        derivation -- meaning a tolerance was modified after derivation, which
+        is exactly what the fingerprint exists to prevent.
+    KeyError
+        Propagated from the evaluators for a missing tolerance entry.
+
+    Notes
+    -----
     The guard is the mechanical version of "no post-hoc tolerance tuning": the
     fingerprint is taken at derivation, before any comparison value exists, and
-    recomputed here. If a tolerance was touched in between, this raises.
+    recomputed here. A reviewer does not have to trust that nobody adjusted a
+    number after seeing a result; the report simply cannot be built if anyone
+    did.
+
+    No ``Examples`` section: a meaningful call needs the full measured-value
+    set and a derived :class:`ToleranceSet`.
     """
     live = _fingerprint(tolset.entries)
     if live != tolset.fingerprint:
@@ -716,12 +1371,38 @@ def _load_schema() -> dict:
 
 
 def validate_report(payload: dict) -> None:
-    """Validate a v2 report. Raises :class:`CriteriaError` on any failure.
+    """Validate a v2 report against the schema and the structural invariants.
 
+    Parameters
+    ----------
+    payload : dict
+        A report as produced by :func:`build_report`.
+
+    Returns
+    -------
+    None
+        Returns normally iff the report is valid.
+
+    Raises
+    ------
+    CriteriaError
+        If ``payload`` is not a mapping, fails the JSON schema, omits a HARD
+        criterion, carries a GATED check without both uncertainties, has a
+        fingerprint inconsistent with its own tolerances, or contains a verdict
+        outside :data:`VERDICTS`.
+    FileNotFoundError
+        If ``validation/schemas/crosscheck_v2.schema.json`` is absent.
+
+    Notes
+    -----
     Uses ``jsonschema`` when available for full draft-2020-12 checking, and
-    always applies the structural invariants that matter most and that a schema
-    cannot express: every HARD criterion present, every GATED check carrying
-    both uncertainties, a self-consistent fingerprint, and only known verdicts.
+    ALWAYS applies the structural invariants a schema cannot express: every
+    HARD criterion present, every GATED check carrying both uncertainties, a
+    self-consistent fingerprint, and only known verdicts. Those checks are the
+    ones that matter, so they must not be contingent on an optional dependency
+    being installed.
+
+    No ``Examples`` section: a valid payload is a full report.
     """
     if not isinstance(payload, dict):
         raise CriteriaError("report must be a JSON object")

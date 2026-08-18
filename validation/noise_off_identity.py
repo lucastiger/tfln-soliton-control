@@ -261,18 +261,43 @@ def run_deterministic(param_set: dict[str, Any] | str, seed: int = 0) -> dict[st
     interpolated from ``config/pyLLE_dispersion_w4400_h800.csv``, a fixed
     ``rng_key = jax.random.PRNGKey(seed)``, and ``NoiseConfig.all_off()``.
 
-    Args:
-        param_set: One entry of :data:`PARAM_SETS` (or its ``name``).
-        seed: Seed for the fixed ``jax.random.PRNGKey``. Pinned, not swept —
-            with every stochastic channel off it only selects the tiny
-            ``1e-3*|e_cw|`` cold-start seed noise, which is nevertheless part of
-            the deterministic trajectory and so must stay fixed.
+    Parameters
+    ----------
+    param_set : dict or str
+        One entry of :data:`PARAM_SETS`, or its ``name``. Must carry ``name``,
+        ``n_tau``, ``t_slow``, ``dw_over_kappa`` [dimensionless, in units of
+        kappa] and ``n_substeps``.
+    seed : int, optional
+        Seed for the fixed ``jax.random.PRNGKey``, default 0. Pinned, not
+        swept: with every stochastic channel off it only selects the tiny
+        ``1e-3*|e_cw|`` cold-start seed noise, which is nevertheless part of
+        the deterministic trajectory and so must stay fixed.
 
-    Returns:
-        ``{"E_final", "E_snapshots", "U_int_history", "delta_T_history",
-        "provenance"}``. The four arrays are numpy, float64/complex128, with the
-        solver's leading trajectory axis retained (``n_traj = 1``) — reshaping
-        here would be a silent transformation of the golden bytes.
+    Returns
+    -------
+    dict
+        ``U_int_history`` (n_traj, t_slow) float64 [J*s], ``E_final``
+        (n_traj, n_tau) complex128 [sqrt(J)], ``E_snapshots``
+        (n_traj, n_snapshots, n_tau) complex128 [sqrt(J)], ``delta_T_history``
+        (n_traj, t_slow) float64 [K], plus a ``provenance`` mapping recording
+        the parameter set, seed, config hashes and library versions.
+
+    Raises
+    ------
+    KeyError
+        If ``param_set`` names an unknown set, or a supplied dict is missing a
+        required key.
+    OSError
+        If the committed config or the dispersion CSV cannot be read.
+
+    Notes
+    -----
+    The four arrays keep the solver's leading TRAJECTORY axis (``n_traj = 1``).
+    Reshaping here would be a silent transformation of the golden bytes, and
+    the point of this module is that the bytes are what is compared.
+
+    No ``Examples`` section: the smallest parameter set runs 2000 round trips
+    on a 256-point grid.
     """
     param_set = _normalise_param_set(param_set)
     (
@@ -397,6 +422,36 @@ def write_golden(out_dir: str | Path = DEFAULT_GOLDEN_DIR, seed: int = 0) -> Non
     file would compare unequal byte-for-byte on a machine whose zlib merely
     chose different match lengths — a false alarm indistinguishable from a real
     solver regression.
+
+    Parameters
+    ----------
+    out_dir : str or pathlib.Path, optional
+        Destination directory; a relative path is resolved against the
+        repository root. Default :data:`DEFAULT_GOLDEN_DIR`.
+    seed : int, optional
+        Seed for the fixed PRNG key, default 0. Recorded in each sidecar.
+
+    Returns
+    -------
+    None
+        Writes ``<name>.npz`` and ``<name>.provenance.json`` per parameter set
+        and prints one progress line each.
+
+    Raises
+    ------
+    OSError
+        If the directory cannot be created or a file cannot be written.
+    KeyError
+        Propagated from :func:`run_deterministic`.
+
+    Notes
+    -----
+    Regenerating goldens is a deliberate, reviewable act: it invalidates every
+    bit-identity claim made against the previous files, so it belongs in its own
+    commit with the toolchain change that motivated it.
+
+    No ``Examples`` section: it runs all four parameter sets and writes into the
+    repository.
     """
     out_dir = Path(out_dir)
     if not out_dir.is_absolute():
@@ -542,20 +597,56 @@ def compare_to_golden(
 ) -> dict[str, Any]:
     """Re-run a parameter set and compare it against its golden file.
 
-    Args:
-        param_set: One entry of :data:`PARAM_SETS` (or its ``name``).
-        strict: ``True`` → raw-byte equality of every array (0 ULP).
-            ``False`` → ``np.allclose(atol=1e-13, rtol=0)``.
-        golden_dir: Directory holding ``<name>.npz`` and
-            ``<name>.provenance.json``.
-        seed: Seed for the fixed PRNG key; must match the golden's.
+    Parameters
+    ----------
+    param_set : dict or str
+        One entry of :data:`PARAM_SETS`, or its ``name``.
+    strict : bool
+        ``True`` requires raw-BYTE equality of every array (0 ULP); ``False``
+        uses ``numpy.allclose(atol=1e-13, rtol=0)``.
+    golden_dir : str or pathlib.Path, optional
+        Directory holding ``<name>.npz`` and ``<name>.provenance.json``,
+        default :data:`DEFAULT_GOLDEN_DIR`.
+    seed : int, optional
+        Seed for the fixed PRNG key, default 0. Must match the golden's.
 
-    Returns:
-        A report dict with ``ok``, ``n_differences``, the per-array reports
-        (max abs diff, max rel diff, first differing index, counts) and, when
-        the recorded jax/jaxlib/numpy versions differ from the running ones,
-        ``version_mismatch`` — accompanied by a loud ``RuntimeWarning``. A
-        version mismatch never by itself fails the comparison.
+    Returns
+    -------
+    dict
+        ``ok``, ``name``, ``mode``, ``n_differences``, per-array reports under
+        ``arrays`` (shape, dtype, ``n_diff``, ``max_abs_diff``,
+        ``max_rel_diff``, ``first_diff_index``) and ``version_mismatch``.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the golden ``.npz`` or its provenance sidecar is missing.
+    KeyError
+        If ``param_set`` is unknown, or a golden file lacks one of
+        :data:`ARRAY_NAMES`.
+    AssertionError
+        If a golden array's dtype differs from :data:`ARRAY_DTYPES`. Dtypes are
+        checked, never coerced -- a dtype change is itself a regression and must
+        not be papered over by a silent cast.
+
+    Warns
+    -----
+    RuntimeWarning
+        When the recorded jax/jaxlib/numpy versions differ from the running
+        ones. XLA is free to change reduction order and kernel fusion between
+        releases, so a difference under a version mismatch is very likely
+        environmental. The warning never by itself fails the comparison --
+        turning an environment change into a physics verdict would be worse
+        than reporting both and letting a human decide.
+
+    Notes
+    -----
+    The tolerance is ABSOLUTE only (``rtol = 0``). The four arrays span many
+    orders of magnitude -- ``|E|**2`` of order 1e-10 J down to ``delta_T`` of
+    order 1e-6 K -- and a relative tolerance would silently license large
+    absolute excursions on the big entries.
+
+    No ``Examples`` section: each call re-runs the full parameter set.
     """
     param_set = _normalise_param_set(param_set)
     name = str(param_set["name"])
@@ -635,6 +726,38 @@ def _print_report(report: dict[str, Any]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Write or check the golden bit-identity artifacts from the command line.
+
+    Parameters
+    ----------
+    argv : list of str or None, optional
+        Command-line arguments; ``None`` (default) reads ``sys.argv[1:]``.
+        Supports ``--write-golden``, ``--check``, ``--strict``, ``--device``,
+        ``--golden-dir`` and ``--seed``.
+
+    Returns
+    -------
+    int
+        The process exit status: 0 when every checked parameter set matched (or
+        when only ``--write-golden`` was requested), 1 otherwise.
+
+    Raises
+    ------
+    SystemExit
+        From ``argparse`` on a malformed command line, on ``--help``, or when
+        neither ``--write-golden`` nor ``--check`` was given.
+    FileNotFoundError
+        Propagated from :func:`compare_to_golden` for a missing golden file.
+
+    Notes
+    -----
+    ``--device`` is applied BEFORE jax is imported, which is why every
+    jax/simulator import in this module is deliberately lazy:
+    :mod:`simulator.lle_solver` forces ``jax_enable_x64`` at import time, so the
+    backend must be chosen first.
+
+    No ``Examples`` section: every path runs all four parameter sets.
+    """
     parser = argparse.ArgumentParser(
         prog="python -m validation.noise_off_identity",
         description=(

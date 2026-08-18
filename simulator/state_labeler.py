@@ -1,4 +1,42 @@
-"""Soliton state classification utilities."""
+"""Seven-class classification of an intracavity-field snapshot.
+
+Two labelers live here and they must agree:
+
+* :func:`make_state_labeler` builds a ``jax.lax.scan``-traceable closure with
+  every threshold baked in as a Python float, so it can run INSIDE the solver's
+  scan and label a snapshot without leaving the device;
+* :func:`label_soliton_state` is the NumPy path, free to use SciPy peak finding
+  and curve fitting, used for offline labeling of stored trajectories.
+
+Both are driven by the SAME threshold dict, built once by
+:func:`make_threshold_params` from the physical configuration, and
+:func:`assert_labelers_consistent` checks a field through both.
+
+Classes
+-------
+0
+    Off / below threshold -- mean ``|E|**2`` below the physical CW floor.
+1
+    CW -- flat field, low contrast.
+2
+    Modulation instability -- periodic structure, moderate contrast.
+3
+    Chaotic -- high contrast, high spectral entropy.
+4
+    Multi-soliton -- high contrast, low entropy, more than one peak.
+5
+    Soliton crystal -- as class 4, but with evenly spaced peaks.
+6
+    Single soliton -- high contrast, low entropy, sech**2 comb.
+
+Notes
+-----
+Fields are stored as physical energies: ``|E|**2`` is in joules, with
+``mean|E|**2`` of order 1e-11 to 1e-9 J across a detuning sweep against an
+empty-cavity numerical floor around 1e-16 J. Every power threshold here is
+therefore derived from the configuration rather than hard-coded; see
+:func:`physical_off_floor`.
+"""
 
 from __future__ import annotations
 import jax.numpy as jnp
@@ -34,16 +72,63 @@ def physical_off_floor(
     delta_omega_max: float,
     off_fraction: float = 1e-3,
 ) -> float:
-    """Smallest CW intracavity energy over the sweep, scaled by ``off_fraction``.
+    """Return the OFF energy floor: the dimmest CW state, scaled down.
 
-    Parameters are read from the simulation config (all in SI / rad·s⁻¹):
-      kappa            total cavity loss rate κ
-      kappa_c          coupling rate κ_c
-      pin              pump power (W)
-      delta_omega_max  largest |δω| in the detuning sweep (rad/s)
-      off_fraction     f ∈ (0, 1); fraction of U_cw,min below which a field is OFF
+    Parameters
+    ----------
+    kappa : float
+        Total cavity loss rate ``kappa`` [rad/s].
+    kappa_c : float
+        Coupling rate ``kappa_c`` [rad/s].
+    pin : float
+        Pump power [W].
+    delta_omega_max : float
+        Largest ``|delta_omega|`` reached in the detuning sweep [rad/s], where
+        ``delta_omega = omega_res - omega_pump``.
+    off_fraction : float, optional
+        Fraction ``f`` in (0, 1) of ``U_cw,min`` below which a field counts as
+        OFF (default 1e-3). Dimensionless.
 
-    Returns the OFF power floor in Joules.
+    Returns
+    -------
+    float
+        The OFF power floor [J], i.e. ``off_fraction * U_cw,min``.
+
+    Raises
+    ------
+    ZeroDivisionError
+        If ``kappa`` and ``delta_omega_max`` are both zero, which would make the
+        CW denominator vanish. Any physical configuration has ``kappa > 0``.
+
+    Notes
+    -----
+    The homogeneous (CW) intracavity energy of the LLE is
+
+        U_cw(delta_omega) = kappa_c * pin / ((kappa/2)**2 + delta_omega**2)  [J]
+
+    which decreases monotonically in ``|delta_omega|``, so its minimum over a
+    sweep is reached at the largest ``|delta_omega|``:
+
+        U_cw,min = kappa_c * pin / ((kappa/2)**2 + delta_omega_max**2).
+
+    A field is declared OFF when ``mean(|E|**2) < off_fraction * U_cw,min``,
+    i.e. when it sits a factor ``f`` below even the dimmest CW state the cavity
+    can support. Tying the floor to the physics rather than to a magic constant
+    is what keeps the labeler correct when the pump power or the sweep range
+    changes: ``f`` of 1e-3 to 1e-2 leaves a wide margin above the ~1e-16 J
+    empty-cavity numerical floor while staying far below any real CW field.
+
+    Examples
+    --------
+    >>> print(f"{physical_off_floor(1e9, 5e8, 0.1, 5e9):.4e} J")
+    1.9802e-15 J
+
+    Pushing the sweep further off resonance lowers the dimmest CW state, and
+    with it the floor:
+
+    >>> bool(physical_off_floor(1e9, 5e8, 0.1, 1e10)
+    ...      < physical_off_floor(1e9, 5e8, 0.1, 5e9))
+    True
     """
     k = float(kappa)
     u_cw_min = float(kappa_c) * float(pin) / ((k / 2.0) ** 2 + float(delta_omega_max) ** 2)
@@ -62,29 +147,87 @@ def make_threshold_params(
     vacuum_off_floor: float = 0.0,
     overrides: dict | None = None,
 ) -> dict:
-    """Build the shared threshold dict from physical config — single source of truth.
+    """Build the shared threshold dict from physical config -- single source of truth.
 
-    The OFF floor is derived from (κ, κ_c, pin, δω_max) via ``physical_off_floor``;
-    all other (geometric / spectral) thresholds come from ``_DEFAULT_THRESHOLD_PARAMS``.
-    The SAME dict feeds both the JAX labeler (``make_state_labeler``) and the NumPy
-    labeler (``label_soliton_state``), so the two stay byte-for-byte consistent.
-
-    Quantum-vacuum-floor parameters (all inactive by default; the solver
-    computes them from ħω₀, n_tau and the config margins ONLY when the quantum
-    noise channel is enabled — the labeler never derives physics itself):
-
-    ``vacuum_floor_level``  [raw |FFT(E)|² units, i.e. n_tau²·ħω₀/2 × margin]
+    Parameters
+    ----------
+    kappa : float
+        Total cavity loss rate [rad/s].
+    kappa_c : float
+        Coupling rate [rad/s].
+    pin : float
+        Pump power [W].
+    delta_omega_max : float
+        Largest ``|delta_omega|`` in the sweep [rad/s].
+    off_fraction : float, optional
+        Fraction of ``U_cw,min`` defining the OFF floor (default 1e-3),
+        dimensionless. Keyword-only.
+    vacuum_floor_level : float, optional
         Absolute clip applied to the (smoothed) spectral envelope before the
-        single-DKS monotonicity gate; 0.0 = exact historical arithmetic.
-    ``envelope_smooth_modes``  [modes]
-        Circular moving-average width (odd-adjusted) for the same envelope;
-        1 = identity. Reduces the exponential-statistics wing fluctuation
-        (~5.6 dB/mode single-snapshot) to ~5.6/√w dB.
-    ``vacuum_off_floor``  [J, i.e. n_tau·ħω₀/2 × margin]
-        Lifts the OFF power floor to max(off_fraction·U_cw,min, this), so a
-        pure vacuum-filled cavity (e.g. pin = 0 with the Langevin drive on)
-        labels OFF instead of being promoted to CW/MI by its own ½-photon
-        background. 0.0 = unchanged legacy floor.
+        single-DKS monotonicity gate, in raw ``|FFT(E)|**2`` units -- i.e.
+        ``n_tau**2 * hbar*omega0/2`` times a margin. Default 0.0, which clips
+        nothing and reproduces the exact historical arithmetic. Keyword-only.
+    envelope_smooth_modes : int, optional
+        Circular moving-average width [modes] for that same envelope,
+        odd-adjusted; 1 (default) is the identity. Keyword-only.
+    vacuum_off_floor : float, optional
+        Lower bound [J] on the OFF power floor -- ``n_tau * hbar*omega0/2``
+        times a margin. Default 0.0, leaving the legacy floor unchanged.
+        Keyword-only.
+    overrides : dict or None, optional
+        Applied LAST, over everything above. Escape hatch for tests and for
+        studies that need a non-physical threshold. Keyword-only.
+
+    Returns
+    -------
+    dict
+        A copy of ``_DEFAULT_THRESHOLD_PARAMS`` with ``power_floor`` [J],
+        ``vacuum_floor_level`` and ``envelope_smooth_modes`` replaced, then
+        ``overrides`` applied.
+
+    Raises
+    ------
+    TypeError
+        If ``envelope_smooth_modes`` cannot be coerced to ``int``.
+    ZeroDivisionError
+        Propagated from :func:`physical_off_floor` for a degenerate cavity.
+
+    Notes
+    -----
+    The OFF floor is derived from ``(kappa, kappa_c, pin, delta_omega_max)``
+    through :func:`physical_off_floor`; all other (geometric and spectral)
+    thresholds come from ``_DEFAULT_THRESHOLD_PARAMS``. The SAME dict feeds both
+    the JAX labeler (:func:`make_state_labeler`) and the NumPy labeler
+    (:func:`label_soliton_state`), which is what keeps the two consistent.
+
+    The three quantum-vacuum-floor parameters are inactive by default. The
+    solver computes them from ``hbar*omega0``, ``n_tau`` and the config margins
+    ONLY when the quantum-noise channel is enabled -- the labeler never derives
+    physics itself. Smoothing over ``w`` modes reduces the exponential-statistics
+    wing fluctuation of a single snapshot from ~5.6 dB/mode to ~5.6/sqrt(w) dB,
+    and ``vacuum_off_floor`` stops a pure vacuum-filled cavity (``pin = 0`` with
+    the Langevin drive on) from being promoted out of OFF by its own half-photon
+    background.
+
+    Examples
+    --------
+    >>> params = make_threshold_params(1e9, 5e8, 0.1, 5e9)
+    >>> print(f"{params['power_floor']:.4e} J")
+    1.9802e-15 J
+    >>> params["contrast_cw"], params["envelope_smooth_modes"]
+    (2.0, 1)
+
+    ``vacuum_off_floor`` can only RAISE the floor, never lower it:
+
+    >>> lifted = make_threshold_params(1e9, 5e8, 0.1, 5e9, vacuum_off_floor=1e-12)
+    >>> print(f"{lifted['power_floor']:.4e} J")
+    1.0000e-12 J
+
+    ``overrides`` wins over everything:
+
+    >>> make_threshold_params(1e9, 5e8, 0.1, 5e9,
+    ...                       overrides={"contrast_cw": 3.0})["contrast_cw"]
+    3.0
     """
     params = dict(_DEFAULT_THRESHOLD_PARAMS)
     params["power_floor"] = max(
@@ -99,23 +242,74 @@ def make_threshold_params(
 
 
 def make_state_labeler(threshold_params: dict | None = None):
-    """Return a JAX-traceable 7-class state labeler for use inside jax.lax.scan.
+    """Return a JAX-traceable 7-class state labeler for use inside ``jax.lax.scan``.
 
-    The labeler bakes every threshold into Python-float constants at build time,
-    so the returned ``state_labeler`` contains no Python branching on traced
-    values and is fully ``jax.lax.scan``-traceable. Pass the dict produced by
-    ``make_threshold_params`` (or any subset of ``_DEFAULT_THRESHOLD_PARAMS``) so
-    the JAX path uses the identical reductions and thresholds as the NumPy path.
+    Parameters
+    ----------
+    threshold_params : dict or None, optional
+        Thresholds, normally the dict produced by
+        :func:`make_threshold_params`. Any subset of
+        ``_DEFAULT_THRESHOLD_PARAMS`` is accepted and merged over the defaults;
+        ``None`` (default) uses the defaults unchanged. Units follow the keys:
+        ``power_floor`` [J], ``vacuum_floor_level`` [raw ``|FFT(E)|**2``],
+        ``comb_structure_min_db`` [dB], ``envelope_smooth_modes`` [modes], the
+        rest dimensionless.
+
+    Returns
+    -------
+    callable
+        ``state_labeler(e_t)`` mapping an ``(n_tau,)`` complex field [sqrt(J)]
+        to a scalar ``jnp.int32`` class in 0--6.
+
+    Raises
+    ------
+    KeyError
+        If a required threshold key is missing from the merged dict -- possible
+        only if ``_DEFAULT_THRESHOLD_PARAMS`` and this function drift apart.
+
+    Notes
+    -----
+    Every threshold is baked into a Python-float constant at BUILD time, so the
+    returned closure contains no Python branching on traced values and is fully
+    ``jax.lax.scan``-traceable. The two vacuum-floor knobs are likewise resolved
+    at build time, so at their inactive defaults (``0.0`` and ``1``) the traced
+    graph is EXACTLY the historical arithmetic rather than a no-op clip and a
+    width-1 convolution.
+
+    Passing the same dict to this function and to :func:`label_soliton_state` is
+    what makes the two labelers comparable; a disagreement is then a genuine
+    reduction or mechanism drift rather than a config mismatch.
 
     Classes
     -------
-    0  Off / below threshold    — mean|E|² below the physical CW floor
-    1  CW                       — flat field, low contrast
-    2  Modulation instability   — periodic structure, moderate contrast
-    3  Chaotic                  — high contrast, high spectral entropy
-    4  Multi-soliton            — high contrast, low entropy, >1 peak
-    5  Soliton Crystal          - high contrast, low entropy, evenly spaced peaks (highly ordered)
-    6  Single soliton           — high contrast, low entropy, sech² comb
+    0
+        Off / below threshold -- ``mean|E|**2`` below the physical CW floor.
+    1
+        CW -- flat field, low contrast.
+    2
+        Modulation instability -- periodic structure, moderate contrast.
+    3
+        Chaotic -- high contrast, high spectral entropy.
+    4
+        Multi-soliton -- high contrast, low entropy, more than one peak.
+    5
+        Soliton crystal -- high contrast, low entropy, evenly spaced peaks.
+    6
+        Single soliton -- high contrast, low entropy, sech**2 comb.
+
+    Examples
+    --------
+    >>> import numpy as np, jax.numpy as jnp
+    >>> labeler = make_state_labeler()
+    >>> n = 1024
+    >>> tau = np.arange(n) - n // 2
+    >>> soliton = (1e-4 / np.cosh(tau / 16.0)).astype(np.complex128)
+    >>> int(labeler(jnp.asarray(soliton, dtype=jnp.complex64)))
+    6
+    >>> int(labeler(jnp.full(n, 1e-5 + 0j, dtype=jnp.complex64)))
+    1
+    >>> int(labeler(jnp.full(n, 1e-9 + 0j, dtype=jnp.complex64)))
+    0
     """
 
     # --- bake all thresholds into float constants (no traced Python branching) ---
@@ -358,7 +552,59 @@ _DEFAULT_THRESHOLD_PARAMS: dict = {
 }
 
 def label_soliton_state(E_tau, threshold_params) -> int:
-    """Label one intracavity-field snapshot using a 7-class soliton scheme."""
+    """Label one intracavity-field snapshot with the 7-class soliton scheme (NumPy path).
+
+    Parameters
+    ----------
+    E_tau : numpy.ndarray
+        Intracavity field E(tau), shape ``(n_tau,)``, complex, units sqrt(J);
+        ``|E|**2`` is in joules.
+    threshold_params : dict or None
+        Thresholds, normally from :func:`make_threshold_params`. Merged over
+        ``_DEFAULT_THRESHOLD_PARAMS``, so a partial dict (or ``None``) is
+        accepted.
+
+    Returns
+    -------
+    int
+        Class index 0--6; see :func:`make_state_labeler` for the class list.
+
+    Raises
+    ------
+    IndexError
+        If ``E_tau`` is not 1-D -- ``E_tau.shape[0]`` is read directly as
+        ``n_tau``.
+    ValueError
+        Propagated from ``numpy.fft`` for an empty field.
+
+    Notes
+    -----
+    The SciPy counterpart of :func:`make_state_labeler`: same thresholds, same
+    class definitions, but free to use ``find_peaks`` and ``curve_fit`` because
+    it never runs inside a traced scan.
+
+    The decision order is power floor, then contrast, then -- for high-contrast
+    fields -- spectral entropy, peak count and peak-spacing regularity. The
+    single-soliton branch is guarded twice. First by comb structure: a CW field
+    carrying a single-sample numerical spike also has high contrast and one
+    peak, but its sideband floor is FLAT (inner/outer ratio near 0 dB) whereas a
+    real comb bunches sideband power near the pump, so a flat-floored spike is
+    routed to CW rather than read as a soliton. Then by a sech**2 fit of the
+    temporal profile: a failed fit or a poor R**2 lands in chaotic, never in
+    single-soliton.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> n = 1024
+    >>> tau = np.arange(n) - n // 2
+    >>> label_soliton_state((1e-4 / np.cosh(tau / 16.0)).astype(complex), None)
+    6
+    >>> label_soliton_state(np.full(n, 1e-5 + 0j), None)
+    1
+    >>> label_soliton_state(np.full(n, 1e-9 + 0j), None)
+    0
+    """
     
     params = {**_DEFAULT_THRESHOLD_PARAMS, **(threshold_params or {})}
 
@@ -447,7 +693,49 @@ def label_soliton_state(E_tau, threshold_params) -> int:
 
 
 def label_trajectory(E_history, threshold_params=None) -> np.ndarray:
-    """Label all snapshots in a trajectory with the 7-class soliton scheme."""
+    """Label every snapshot in a trajectory with the 7-class soliton scheme.
+
+    Parameters
+    ----------
+    E_history : numpy.ndarray
+        Snapshot history, shape ``(n_snapshots, n_tau)``, complex, units
+        sqrt(J).
+    threshold_params : dict or None, optional
+        Thresholds, normally from :func:`make_threshold_params`. Merged over
+        the defaults ONCE here and passed down, so every snapshot in a
+        trajectory is labeled against identical thresholds.
+
+    Returns
+    -------
+    numpy.ndarray
+        Shape ``(n_snapshots,)``, dtype ``int32``, values in 0--6.
+
+    Raises
+    ------
+    IndexError
+        If ``E_history`` is not 2-D.
+    ValueError
+        Propagated from :func:`label_soliton_state` for a degenerate snapshot.
+
+    Notes
+    -----
+    A plain Python loop over :func:`label_soliton_state`, not a vectorized
+    reduction: the single-soliton branch runs a Levenberg--Marquardt sech**2 fit
+    per snapshot, which has no array form. Labeling inside a solve uses the JAX
+    labeler instead; this one is for stored trajectories.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> n = 1024
+    >>> tau = np.arange(n) - n // 2
+    >>> history = np.stack([np.full(n, 1e-9 + 0j),
+    ...                     np.full(n, 1e-5 + 0j),
+    ...                     (1e-4 / np.cosh(tau / 16.0)).astype(complex)])
+    >>> labels = label_trajectory(history)
+    >>> print(labels, labels.dtype)
+    [0 1 6] int32
+    """
     params = {**_DEFAULT_THRESHOLD_PARAMS, **(threshold_params or {})}
 
     n_snapshots = E_history.shape[0]
@@ -458,20 +746,65 @@ def label_trajectory(E_history, threshold_params=None) -> np.ndarray:
 
 
 def sech2_envelope_correlation(e_field: np.ndarray) -> tuple[float, float, float]:
-    """sech^2 correlation of the comb envelope (dB), excluding the pump line.
+    """Fit a sech**2 envelope to the comb spectrum and report how well it matches.
 
-    This is the quantitative, fit-based counterpart of the single-soliton
-    discriminator the labelers use (single temporal peak + smooth sech^2 comb):
-    a dissipative Kerr soliton spectrum is a strong pump (DC) line plus a sech^2
-    comb of sidebands (|FT of sech|^2 = sech^2). We fit a width-matched sech^2 to
-    the (fftshifted) sideband envelope in log/dB space — where the comb spans many
-    decades — with the pump line itself excluded (it is not part of the envelope).
+    Parameters
+    ----------
+    e_field : numpy.ndarray
+        Intracavity field E(tau), shape ``(n_tau,)``, complex, units sqrt(J).
 
-    Lives in the simulator layer alongside the labeler so ``analysis`` code can
-    import it from here; nothing in ``simulator`` imports from ``analysis``.
+    Returns
+    -------
+    pearson_corr : float
+        Pearson correlation [dimensionless] between the measured log-spectrum
+        and the fitted sech**2 envelope, over the sidebands only. NaN on fit
+        failure.
+    r2 : float
+        Coefficient of determination [dimensionless] of the same fit. NaN on
+        fit failure.
+    fitted_mode_width : float
+        Fitted envelope half-width [modes]. NaN on fit failure.
 
-    Returns (pearson_corr, r2, fitted_mode_width). On fit failure returns NaNs.
-    A single DKS scores > 0.99; MI/chaos combs score near 0 or negative.
+    Raises
+    ------
+    IndexError
+        If ``e_field`` is not 1-D. Fit failures do NOT raise -- they return
+        three NaNs, because this runs over long trajectories where one
+        non-convergent snapshot must not abort the sweep.
+
+    Notes
+    -----
+    The quantitative, fit-based counterpart of the single-soliton discriminator
+    the labelers use. A dissipative Kerr soliton spectrum is a strong pump (DC)
+    line plus a sech**2 comb of sidebands, since ``|FT{sech}|**2 = sech**2``. A
+    width-matched sech**2 (plus a constant floor) is fitted to the fftshifted
+    sideband envelope in log space -- where the comb spans many decades -- with
+    the pump line itself EXCLUDED, because it is not part of the envelope.
+
+    A single dissipative Kerr soliton scores above 0.99; modulation-instability
+    and chaotic combs score near zero or negative.
+
+    This lives in the simulator layer alongside the labeler so that ``analysis``
+    code can import it from here: nothing in ``simulator`` may import from
+    ``analysis``.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> n = 1024
+    >>> tau = np.arange(n) - n // 2
+    >>> corr, r2, width = sech2_envelope_correlation(
+    ...     (1.0 / np.cosh(tau / 16.0)).astype(complex))
+    >>> print(f"{corr:.4f} {r2:.4f} {width:.4f}")
+    1.0000 0.9999 6.4458
+
+    A modulation-instability comb, with its sidebands spread rather than
+    bunched, scores far below that:
+
+    >>> mi = 1e-5 * (1.0 + 0.5 * np.cos(2 * np.pi * 8 * np.arange(n) / n))
+    >>> corr, _, _ = sech2_envelope_correlation(mi.astype(complex))
+    >>> print(f"{corr:.4f}")
+    0.2484
     """
     n = e_field.shape[0]
     spec = np.abs(np.fft.fftshift(np.fft.fft(e_field))) ** 2
@@ -504,12 +837,48 @@ def assert_labelers_consistent(
     atol: float = 0.0,
     threshold_params: dict | None = None,
 ) -> None:
-    """Verify JAX and NumPy labelers agree on a test field.
+    """Verify that the JAX and NumPy labelers agree on a test field.
 
-    Both labelers are driven by the *same* threshold dict so any disagreement is
-    a genuine reduction/mechanism drift rather than a config mismatch. Run this
-    during dataset generation to catch labeler drift early.
-    Raises AssertionError if the two labelers disagree.
+    Parameters
+    ----------
+    e_field : numpy.ndarray
+        Intracavity field E(tau), shape ``(n_tau,)``, complex, units sqrt(J).
+    atol : float, optional
+        Accepted for API stability and currently unused: the labels are
+        integers, so the comparison is exact. Default 0.0.
+    threshold_params : dict or None, optional
+        Thresholds, merged over the defaults and passed to BOTH labelers.
+
+    Returns
+    -------
+    None
+        Returns normally iff the two labelers agree.
+
+    Raises
+    ------
+    AssertionError
+        If the labels differ, reporting both labels together with the field's
+        peak power [J] and contrast [dimensionless] so the disagreeing regime is
+        identifiable from the message alone.
+
+    Notes
+    -----
+    Both labelers are driven by the SAME threshold dict, so any disagreement is
+    a genuine reduction or mechanism drift rather than a config mismatch. The
+    JAX side is evaluated in ``complex64``, matching how the labeler is called
+    inside the solver's scan.
+
+    Run this during dataset generation to catch labeler drift early: a
+    trajectory labeled on-device and re-labeled offline must carry the same
+    classes, or the dataset and its analysis disagree about what they contain.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> n = 1024
+    >>> tau = np.arange(n) - n // 2
+    >>> assert_labelers_consistent((1e-4 / np.cosh(tau / 16.0)).astype(complex))
+    >>> assert_labelers_consistent(np.full(n, 1e-5 + 0j))
     """
     params = {**_DEFAULT_THRESHOLD_PARAMS, **(threshold_params or {})}
     jax_labeler = make_state_labeler(params)

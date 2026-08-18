@@ -124,7 +124,63 @@ DEFAULT_T_FINAL_ROUND_TRIPS = 200
 
 @dataclass(frozen=True)
 class MMSSolution:
-    """The manufactured solution and everything derived from it."""
+    """The manufactured solution and everything derived from it.
+
+    Parameters
+    ----------
+    amplitude : float
+        Peak field amplitude A [sqrt(J)].
+    width : float
+        Gaussian envelope 1/e half-width w [s] in fast time.
+    center : float
+        Envelope centre tau0 [s] within the round trip.
+    mode_number : int
+        Integer mode index m_k [dimensionless] of the carrier, so that
+        ``k = 2*pi*m_k/t_r``.
+    omega_m : float
+        Temporal angular frequency [rad/s] of the slow-time phase rotation.
+    pin : float
+        Pump power [W] the run is driven with.
+    delta_omega : float
+        Detuning ``omega_res - omega_pump`` [rad/s].
+    beta : tuple of float
+        Dispersion coefficients handed to the solver: beta2 [s], beta3
+        [s**2], ...
+    params : CavityParams
+        Cavity rates, nonlinearity and derived config the run uses.
+
+    Raises
+    ------
+    dataclasses.FrozenInstanceError
+        On any attempt to mutate an instance; the solution is the ground truth
+        of the study and must not drift between refinement levels.
+
+    Notes
+    -----
+    The manufactured field is
+
+        E_mms(tau, t) = A * exp(-((tau - tau0)/w)**2)
+                          * exp(1j*(k*tau + omega_m*t))     [sqrt(J)],
+
+    a Gaussian envelope carried by an exact grid mode. The carrier mode number
+    is an INTEGER so that ``k`` is an exact multiple of ``2*pi/t_r`` and the
+    carrier is periodic on the domain to machine precision; only the Gaussian
+    envelope is non-periodic, and :func:`periodicity_defect` bounds that defect.
+
+    Examples
+    --------
+    >>> sol = manufactured_solution()
+    >>> sol.mode_number
+    3
+    >>> abs(sol.k * sol.params.t_r / (2 * 3.141592653589793) - 3) < 1e-9
+    True
+    >>> grid = sol.tau_grid(8)
+    >>> grid.shape, float(grid[0])
+    ((8,), 0.0)
+    >>> field = sol.field(grid, 0.0)
+    >>> print(field.shape, field.dtype)
+    (8,) complex128
+    """
 
     amplitude: float          # A, sqrt(J)
     width: float              # w, s
@@ -138,14 +194,97 @@ class MMSSolution:
 
     @property
     def k(self) -> float:
-        """Fast-time wavenumber [rad/s], an exact integer multiple of 2*pi/t_r."""
+        """Fast-time wavenumber of the carrier.
+
+        Returns
+        -------
+        float
+            ``2*pi*mode_number/t_r`` [rad/s], an exact integer multiple of
+            ``2*pi/t_r`` and therefore exactly representable on the FFT grid.
+
+        Notes
+        -----
+        Using an integer mode number is what keeps the carrier periodic on the
+        domain: a non-integer ``k`` would leak a discontinuity into the spectrum
+        and pollute the very truncation error the study measures.
+
+        Examples
+        --------
+        >>> sol = manufactured_solution(mode_number=3)
+        >>> abs(sol.k - 2 * 3.141592653589793 * 3 / sol.params.t_r) < 1.0
+        True
+        """
         return 2.0 * math.pi * self.mode_number / self.params.t_r
 
     def tau_grid(self, n_tau: int) -> np.ndarray:
+        """Fast-time sample points of one round trip.
+
+        Parameters
+        ----------
+        n_tau : int
+            Number of fast-time grid points.
+
+        Returns
+        -------
+        numpy.ndarray
+            Shape ``(n_tau,)``, dtype ``float64``, units s: the uniform grid
+            ``[0, t_r)`` with spacing ``t_r/n_tau``.
+
+        Raises
+        ------
+        ValueError
+            Propagated from ``numpy.arange`` for a negative ``n_tau``.
+
+        Notes
+        -----
+        Half-open, matching the solver's FFT convention: the endpoint ``t_r``
+        is the same physical point as 0 and must not be sampled twice.
+
+        Examples
+        --------
+        >>> sol = manufactured_solution()
+        >>> grid = sol.tau_grid(4)
+        >>> grid.shape
+        (4,)
+        >>> bool(abs(grid[1] - sol.params.t_r / 4) < 1e-24)
+        True
+        """
         return np.arange(n_tau) * (self.params.t_r / n_tau)
 
     def field(self, tau: np.ndarray, t: float) -> np.ndarray:
-        """``E_mms(tau, t)`` [sqrt(J)]."""
+        """Evaluate the manufactured field ``E_mms(tau, t)``.
+
+        Parameters
+        ----------
+        tau : numpy.ndarray
+            Fast-time coordinates [s], normally from :meth:`tau_grid`.
+        t : float
+            Slow time [s] since the start of the run.
+
+        Returns
+        -------
+        numpy.ndarray
+            Same shape as ``tau``, dtype ``complex128``, units sqrt(J).
+
+        Notes
+        -----
+        This is the EXACT solution the solver is scored against -- both as the
+        initial condition (``t = 0``) and as the reference at the final time.
+        Its slow-time dependence is a pure phase rotation, so ``|E_mms|`` is
+        stationary and any amplitude error the solver shows is entirely
+        numerical.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> sol = manufactured_solution()
+        >>> e0 = sol.field(sol.tau_grid(64), 0.0)
+        >>> print(e0.shape, e0.dtype)
+        (64,) complex128
+        >>> et = sol.field(sol.tau_grid(64), 1e-9)
+        >>> bool(np.allclose(np.abs(e0), np.abs(et)))   # phase rotation only
+        True
+        """
         env = self.amplitude * np.exp(-(((tau - self.center) / self.width) ** 2))
         return (env * np.exp(1j * (self.k * tau + self.omega_m * t))).astype(np.complex128)
 
@@ -163,10 +302,72 @@ def manufactured_solution(
 ) -> MMSSolution:
     """Build the manufactured solution at physically meaningful scales.
 
-    ``kerr_over_kappa`` sets the amplitude through ``gamma*A^2 = f*kappa``, so
-    the Kerr term is a real fraction of the linear rates rather than a
-    perturbation the study would be blind to. The default 0.68 puts
-    ``gamma*|E|^2`` at the same order as ``kappa/2`` and ``delta_omega``.
+    Parameters
+    ----------
+    params : CavityParams or None, optional
+        Cavity rates and nonlinearity. ``None`` (default) calls
+        :func:`~validation.analytic_cw.load_cavity_params`, which also derives
+        the thermo-optic-free config the study runs against.
+    pin_over_pth : float, optional
+        Pump power in units of the MI threshold ``p_th`` [dimensionless],
+        default 2.0. Keyword-only.
+    delta_over_kappa : float, optional
+        Detuning in units of ``kappa`` [dimensionless], default 2.0 -- inside
+        the soliton existence window. Keyword-only.
+    beta : sequence of float, optional
+        Dispersion coefficients starting at beta2 [s], default
+        :data:`DEFAULT_BETA`. Non-zero so the study exercises the dispersion
+        operator instead of skipping it. Keyword-only.
+    mode_number : int, optional
+        Integer carrier mode index [dimensionless], default 3. Keyword-only.
+    width_fraction : float, optional
+        Envelope width as ``t_r/width_fraction`` [dimensionless], default 16.0.
+        Keyword-only.
+    omega_m_over_kappa : float, optional
+        Slow-time phase rotation rate in units of ``kappa`` [dimensionless],
+        default 2.0. Keyword-only.
+    kerr_over_kappa : float, optional
+        Kerr shift in units of ``kappa`` [dimensionless], default 0.68.
+        Keyword-only.
+
+    Returns
+    -------
+    MMSSolution
+        The frozen solution record, with ``amplitude`` [sqrt(J)] derived from
+        ``kerr_over_kappa`` and ``pin`` [W] from ``pin_over_pth``.
+
+    Raises
+    ------
+    ZeroDivisionError
+        If ``params.gamma`` or ``width_fraction`` is zero.
+    OSError
+        Propagated from :func:`~validation.analytic_cw.load_cavity_params` when
+        ``params`` is ``None`` and the config cannot be read or the derived
+        config cannot be written.
+
+    Notes
+    -----
+    Every knob is expressed in units of a physical rate rather than as a bare
+    number, so the manufactured problem sits at the same scales as a real run.
+    ``kerr_over_kappa`` sets the amplitude through ``gamma*A**2 = f*kappa``, so
+    the Kerr term is a real FRACTION of the linear rates rather than a
+    perturbation the study would be blind to; the default 0.68 puts
+    ``gamma*|E|**2`` at the same order as ``kappa/2`` and ``delta_omega``.
+
+    A manufactured solution chosen at a convenient but unphysical amplitude
+    would measure the order of the LINEAR part of the scheme only, and would
+    report second order for a scheme whose nonlinear coupling is first order.
+
+    Examples
+    --------
+    >>> sol = manufactured_solution()
+    >>> p = sol.params
+    >>> bool(abs(sol.pin / p.p_th - 2.0) < 1e-12)
+    True
+    >>> bool(abs(sol.delta_omega / p.kappa - 2.0) < 1e-12)
+    True
+    >>> bool(abs(p.gamma * sol.amplitude ** 2 / p.kappa - 0.68) < 1e-9)
+    True
     """
     if params is None:
         params = load_cavity_params()
@@ -187,10 +388,51 @@ def manufactured_solution(
 def periodicity_defect(sol: MMSSolution, n_tau: int = DEFAULT_N_TAU) -> dict[str, float]:
     """Quantify the two approximations in the manufactured solution.
 
-    Returns ``envelope_at_edge`` (the Gaussian's value at the domain boundary
-    relative to its peak — the periodicity defect) and ``spectral_tail`` (its
-    Fourier amplitude at the Nyquist mode relative to the peak — the resolution
-    defect). Both must sit far below the discretization errors being measured.
+    Parameters
+    ----------
+    sol : MMSSolution
+        The manufactured solution to characterize.
+    n_tau : int, optional
+        Fast-time grid size the study will run at, default
+        :data:`DEFAULT_N_TAU`.
+
+    Returns
+    -------
+    dict of str to float
+        ``envelope_at_edge`` -- the Gaussian's value at the domain boundary
+        relative to its peak [dimensionless], i.e. the PERIODICITY defect;
+        ``spectral_tail`` -- its Fourier amplitude at the Nyquist mode relative
+        to the peak [dimensionless], i.e. the RESOLUTION defect;
+        ``samples_per_width`` -- grid points per envelope width
+        [dimensionless].
+
+    Raises
+    ------
+    ZeroDivisionError
+        If ``sol.width`` or ``sol.params.t_r`` is zero.
+
+    Notes
+    -----
+    The manufactured field is not exactly periodic (a Gaussian has infinite
+    support) and not exactly band-limited. Both defects are exponentially
+    small, but "exponentially small" is not an argument -- it is a number, and
+    a convergence study is only meaningful while both defects sit FAR below the
+    discretization error being measured. At the defaults they are of order
+    1e-28 and 1e-69, against measured errors of order 1e-3, so the study has
+    roughly twenty-five decades of headroom before either becomes the limiting
+    term.
+
+    Examples
+    --------
+    >>> defect = periodicity_defect(manufactured_solution())
+    >>> sorted(defect)
+    ['envelope_at_edge', 'samples_per_width', 'spectral_tail']
+    >>> bool(defect["envelope_at_edge"] < 1e-20)
+    True
+    >>> bool(defect["spectral_tail"] < 1e-20)
+    True
+    >>> print(f"{defect['samples_per_width']:.1f}")
+    8.0
     """
     half = sol.params.t_r / 2.0
     envelope_at_edge = math.exp(-((half / sol.width) ** 2))
@@ -206,19 +448,70 @@ def periodicity_defect(sol: MMSSolution, n_tau: int = DEFAULT_N_TAU) -> dict[str
 def manufactured_source(
     sol: MMSSolution, n_tau: int = DEFAULT_N_TAU
 ) -> tuple[np.ndarray, float]:
-    """Derive ``Psi(tau)`` with sympy, so that ``S(tau,t) = Psi*exp(i*w_m*t) - F``.
+    """Derive the forcing that makes the manufactured field an exact solution.
 
-    Returns ``(Psi, F)`` with ``Psi`` complex128 of shape ``(n_tau,)`` and
-    ``F = sqrt(kappa_c*pin)``.
+    Parameters
+    ----------
+    sol : MMSSolution
+        The manufactured solution.
+    n_tau : int, optional
+        Fast-time grid size, default :data:`DEFAULT_N_TAU`.
 
-    The residual is assembled term by term from
+    Returns
+    -------
+    psi : numpy.ndarray
+        Shape ``(n_tau,)``, dtype ``complex128``, units sqrt(J)/s: the
+        tau-dependent factor of the source.
+    drive : float
+        ``F = sqrt(kappa_c*pin)`` [sqrt(J)/s], the constant pump term, returned
+        separately because it carries no ``exp(1j*omega_m*t)`` factor.
 
-        S = dE/dt + (kappa/2)*E + i*D_applied + i*delta_omega*E
-            - i*gamma*|E|^2*E - F,
-        D_applied = sum_k (beta_k/k!) * (-i*d/dtau)^k E
+    Raises
+    ------
+    ImportError
+        If sympy is not installed. The import is lazy so that a base install
+        can import this module.
+    AssertionError
+        If the residual does not factor as ``Psi(tau)*exp(1j*omega_m*t)``, or
+        if the evaluated source contains non-finite values.
 
-    and the ``exp(i*omega_m*t)`` factorization is CHECKED symbolically rather
-    than assumed.
+    Notes
+    -----
+    The whole point of the method of manufactured solutions: rather than
+    comparing the solver against itself at finer resolution, choose the
+    solution FIRST and derive the forcing that makes it exact. The residual is
+    assembled term by term from
+
+        S = dE/dt + (kappa/2)*E + 1j*D_applied + 1j*delta_omega*E
+            - 1j*gamma*|E|**2*E - F,
+        D_applied = sum_k (beta_k/k!) * (-1j*d/dtau)**k E
+
+    so ``S(tau, t) = Psi(tau)*exp(1j*omega_m*t) - F``. The
+    ``exp(1j*omega_m*t)`` factorization is CHECKED symbolically rather than
+    assumed: if the chosen solution were not separable, the two-operation
+    runtime form built by :func:`make_source_fn` would silently drop the
+    residual's t dependence and the study would converge to the wrong PDE
+    while looking healthy.
+
+    The Gaussian envelope is factored out BY CONSTRUCTION rather than left for
+    ``simplify`` to find. Expanding the whole residual first produces terms like
+    ``exp(+a*tau**2)*exp(-b*tau**2)`` with ``a < b`` -- mathematically decaying,
+    but ``inf * 0 = nan`` when ``lambdify`` evaluates the two factors separately
+    in float64.
+
+    Examples
+    --------
+    >>> import pytest; _ = pytest.importorskip("sympy")
+    >>> import numpy as np
+    >>> sol = manufactured_solution()
+    >>> psi, drive = manufactured_source(sol, n_tau=32)
+    >>> print(psi.shape, psi.dtype)
+    (32,) complex128
+    >>> bool(np.all(np.isfinite(psi)))
+    True
+    >>> p = sol.params
+    >>> bool(abs(drive - (p.kappa_c * sol.pin) ** 0.5) < 1e-9 * drive)
+    True
     """
     import sympy as sp                                   # lazy: see module docstring
 
@@ -294,12 +587,50 @@ def manufactured_source(
 def residual_check(
     sol: MMSSolution, n_tau: int = DEFAULT_N_TAU, t_eval: float = 0.0
 ) -> float:
-    """Independent SPECTRAL re-derivation of the source; returns the relative diff.
+    """Re-derive the source spectrally and report the relative disagreement.
 
-    Applies ``disp(omega) = sum_k beta_k/k! * omega^k`` in Fourier space exactly
-    as ``_fine_step`` does, instead of differentiating symbolically in tau. If
-    the sign convention assumed in :func:`manufactured_source` were wrong, the
-    two would disagree at O(1). Returns ``||S_sym - S_spec|| / ||S_spec||``.
+    Parameters
+    ----------
+    sol : MMSSolution
+        The manufactured solution.
+    n_tau : int, optional
+        Fast-time grid size, default :data:`DEFAULT_N_TAU`.
+    t_eval : float, optional
+        Slow time [s] at which to compare, default 0.0. The comparison holds at
+        any time; 0.0 simply avoids a needless phase.
+
+    Returns
+    -------
+    float
+        ``||S_sym - S_spec|| / ||S_spec||`` [dimensionless]. Of order 1e-7 at
+        the defaults -- the residual of the symbolic-versus-spectral
+        derivative, not a physical error.
+
+    Raises
+    ------
+    ImportError
+        If sympy is not installed (via :func:`manufactured_source`).
+    AssertionError
+        Propagated from :func:`manufactured_source`.
+
+    Notes
+    -----
+    An INDEPENDENT check of the source, not a restatement of it. This applies
+    ``disp(omega) = sum_k beta_k/k! * omega**k`` in Fourier space exactly as the
+    solver's fine step does, instead of differentiating symbolically in tau. If
+    the sign convention assumed in :func:`manufactured_source` were wrong --
+    ``omega -> -1j*d/dtau`` under numpy's FFT sign convention -- the two would
+    disagree at O(1) rather than at 1e-7.
+
+    This is the check that makes the whole MMS study trustworthy: a
+    manufactured source derived with a sign error would still produce a clean
+    convergence ladder, converging at the right ORDER to the wrong EQUATION.
+
+    Examples
+    --------
+    >>> import pytest; _ = pytest.importorskip("sympy")
+    >>> bool(residual_check(manufactured_solution(), n_tau=32) < 1e-5)
+    True
     """
     p = sol.params
     grid = sol.tau_grid(n_tau)
@@ -346,7 +677,48 @@ def _cached_source_fn(psi_bytes: bytes, n_tau: int, omega_m: float, drive: float
 
 
 def make_source_fn(sol: MMSSolution, n_tau: int = DEFAULT_N_TAU):
-    """The jax-traceable ``source_fn`` for ``solve_lle_ssfm_jax``."""
+    """Build the jax-traceable ``source_fn`` for :func:`~simulator.lle_solver.solve_lle_ssfm_jax`.
+
+    Parameters
+    ----------
+    sol : MMSSolution
+        The manufactured solution.
+    n_tau : int, optional
+        Fast-time grid size, default :data:`DEFAULT_N_TAU`.
+
+    Returns
+    -------
+    callable
+        ``source_fn(t)`` taking the scalar sub-step time [s] and returning an
+        ``(n_tau,)`` complex array [sqrt(J)/s], suitable as the solver's
+        ``source_fn`` argument.
+
+    Raises
+    ------
+    ImportError
+        If sympy (for the derivation) or JAX (for the closure) is unavailable.
+    AssertionError
+        Propagated from :func:`manufactured_source`.
+
+    Notes
+    -----
+    The returned closure is CACHED on the raw bytes of ``Psi`` together with
+    ``n_tau``, ``omega_m`` and ``F``, so repeated calls for the same
+    manufactured solution return the SAME callable object. That identity
+    matters: the solver caches its jit on ``source_fn`` identity, so a fresh
+    closure per call would trigger a recompilation at every dt of the
+    refinement ladder and turn a minute-long study into an hour-long one.
+
+    Examples
+    --------
+    >>> import pytest; _ = pytest.importorskip("sympy")
+    >>> sol = manufactured_solution()
+    >>> fn = make_source_fn(sol, n_tau=32)
+    >>> make_source_fn(sol, n_tau=32) is fn        # cached: jit-stable identity
+    True
+    >>> print(fn(0.0).shape)
+    (32,)
+    """
     psi, drive = manufactured_source(sol, n_tau)
     return _cached_source_fn(
         np.ascontiguousarray(psi).tobytes(), int(n_tau), sol.omega_m, drive
@@ -363,17 +735,58 @@ def mms_error(
     thermal_coupling: str = "lagged",
     thermal_integrator: str = "euler",
 ) -> float:
-    """Relative L2 error of the solver against ``E_mms`` at the final time.
+    """Measure the solver's relative L2 error against the manufactured solution.
 
-    ``dt`` is the field sub-step in seconds. It must divide ``t_r`` an integer
-    number of times: the refinement knob is ``fine_cadence_M = t_r/dt`` with
-    ``n_substeps = 1``, which refines the field step, the thermal step, the
-    detuning and the energy balance together, so a single dt controls the whole
-    scheme.
+    Parameters
+    ----------
+    dt : float
+        Field sub-step [s]. Must divide ``t_r`` an integer number of times.
+    n_tau : int, optional
+        Fast-time grid size, default :data:`DEFAULT_N_TAU`.
+    sol : MMSSolution or None, optional
+        The manufactured solution; ``None`` (default) builds the standard one.
+        Keyword-only.
+    t_final_round_trips : int, optional
+        Run length in round trips [dimensionless count], default
+        :data:`DEFAULT_T_FINAL_ROUND_TRIPS`. Keyword-only.
+    symmetric_drive : bool, optional
+        Solver flag: split the drive kick to make the sub-step palindromic.
+        Default ``False`` (the shipping first-order scheme). Keyword-only.
+    thermal_coupling : {'lagged', 'strang'}, optional
+        Solver flag, default ``'lagged'`` (the shipping scheme). Keyword-only.
+    thermal_integrator : {'euler', 'exponential'}, optional
+        Solver flag, default ``'euler'`` (the shipping scheme). Keyword-only.
+
+    Returns
+    -------
+    float
+        ``||E_num - E_mms|| / ||E_mms||`` [dimensionless] at the final time.
+
+    Raises
+    ------
+    ValueError
+        If ``dt`` does not divide ``t_r`` an integer number of times, naming
+        the non-integer ratio.
+    ImportError
+        If sympy or JAX is unavailable.
+
+    Notes
+    -----
+    The refinement knob is ``fine_cadence_M = t_r/dt`` with ``n_substeps = 1``.
+    That single knob refines the field step, the thermal step, the detuning and
+    the energy balance TOGETHER, so one ``dt`` controls the whole scheme --
+    refining only the field step would measure the order of the field solver
+    while the lagged thermal coupling silently capped the coupled order at 1.
 
     The run uses the derived thermo-optic-free config
-    (``CavityParams.config_path``, ``dn_dT_per_k = 0``) so the manufactured
-    solution is not perturbed by thermal feedback, and ``NoiseConfig.all_off()``.
+    (``CavityParams.config_path``, with ``dn_dT_per_k = 0``) so the
+    manufactured solution is not perturbed by thermal feedback, and
+    ``NoiseConfig.all_off()`` so the error is deterministic.
+
+    No ``Examples`` section: each call runs a 200-round-trip solve, which is
+    exactly the "long solve" a doctest should not contain. The refinement
+    ladder built on this function lives in :mod:`validation.convergence` and is
+    exercised by ``tests/test_mms_convergence.py``.
     """
     import jax
     from simulator.lle_solver import solve_lle_ssfm_jax

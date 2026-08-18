@@ -80,11 +80,52 @@ _PIN_COLORS = ("#0072B2", "#E69F00", "#009E73", "#CC79A7", "#D55E00")
 def analytic_s_curve(
     pin: float, params: CavityParams, n_points: int = 4001
 ) -> tuple[np.ndarray, np.ndarray]:
-    """The full CW steady-state curve, traced parametrically in P.
+    """Trace the full CW steady-state curve parametrically in the power.
 
-    Returns ``(delta_omega/kappa, P)`` along one continuous stroke covering
-    both arcs, so the multivalued (bistable) region is drawn correctly without
-    any branch bookkeeping.
+    Parameters
+    ----------
+    pin : float
+        Pump power [W].
+    params : CavityParams
+        Resolved cavity constants.
+    n_points : int, optional
+        Samples per arc [dimensionless count], default 4001. The returned
+        arrays are twice this length, one arc each way.
+
+    Returns
+    -------
+    delta_over_kappa : numpy.ndarray
+        Detuning in units of ``kappa`` [dimensionless], shape
+        ``(2*n_points,)``.
+    power : numpy.ndarray
+        Intracavity power ``|E|**2`` [J], same shape.
+
+    Raises
+    ------
+    ZeroDivisionError
+        If ``params.kappa`` is zero.
+
+    Notes
+    -----
+    Parameterised by P rather than by detuning, and traced as ONE continuous
+    stroke covering both arcs, so the multivalued (bistable) region is drawn
+    correctly without any branch bookkeeping. Solving for P at each detuning
+    instead would need the root-selection logic the figure exists to
+    illustrate.
+
+    The spacing is logarithmic with a cosine taper: the low branch spans
+    several decades in P, while the fold needs resolution near ``P_max``, where
+    the square root has infinite slope.
+
+    Examples
+    --------
+    >>> from validation.analytic_cw import load_cavity_params
+    >>> params = load_cavity_params()
+    >>> dw, power = analytic_s_curve(10 * params.p_th, params, n_points=101)
+    >>> dw.shape, power.shape
+    ((202,), (202,))
+    >>> bool((power > 0).all())
+    True
     """
     p_max = params.kappa_c * float(pin) / (params.kappa / 2.0) ** 2
     # Log spacing: the low branch spans several decades in P while the fold
@@ -109,10 +150,50 @@ def analytic_s_curve(
 def bistable_window(
     pin: float, params: CavityParams, grid: Sequence[float] | np.ndarray
 ) -> tuple[float, float] | None:
-    """Detuning span (in units of kappa) where the cubic has three real roots.
+    """Find the detuning span over which the CW cubic has three real roots.
 
-    Computed on a refined grid spanning ``grid`` so the shaded region is not
-    quantized to the coarse verification grid.
+    Parameters
+    ----------
+    pin : float
+        Pump power [W].
+    params : CavityParams
+        Resolved cavity constants.
+    grid : sequence of float or numpy.ndarray
+        Detunings in units of ``kappa`` [dimensionless] whose span is
+        searched.
+
+    Returns
+    -------
+    tuple of float or None
+        ``(lo, hi)`` in units of ``kappa``, or ``None`` when the operating
+        point is nowhere bistable.
+
+    Raises
+    ------
+    ValueError
+        Propagated from
+        :func:`~validation.analytic_cw.analytic_cw_roots` for a non-positive
+        ``kappa`` or ``gamma``.
+
+    Notes
+    -----
+    Evaluated on a refined 4001-point grid spanning ``grid``, so the shaded
+    region is not quantized to the coarse verification grid -- a shaded band
+    that snapped to the sample points would misstate where bistability starts.
+
+    Examples
+    --------
+    >>> from validation.analytic_cw import (DEFAULT_DETUNING_GRID,
+    ...                                     load_cavity_params)
+    >>> params = load_cavity_params()
+    >>> window = bistable_window(10 * params.p_th, params, DEFAULT_DETUNING_GRID)
+    >>> [round(edge, 2) for edge in window]
+    [1.94, 5.01]
+
+    Below threshold there is no bistable window, and ``None`` says so:
+
+    >>> bistable_window(0.5 * params.p_th, params, DEFAULT_DETUNING_GRID) is None
+    True
     """
     fine = np.linspace(float(np.min(grid)), float(np.max(grid)), 4001)
     counts = np.array(
@@ -136,7 +217,48 @@ def make_figure(
     t_slow: int = DEFAULT_T_SLOW,
     n_tau: int = DEFAULT_N_TAU,
 ) -> Path:
-    """Render the two panels from a :func:`validation.analytic_cw.verify` result."""
+    """Render the two-panel analytic-CW figure from a verification result.
+
+    Parameters
+    ----------
+    result : dict
+        The result of :func:`validation.analytic_cw.verify`.
+    out_path : pathlib.Path
+        Destination image.
+    scurve_pin_mult : float, optional
+        Pump power in units of ``P_th`` [dimensionless] the S-curve panel is
+        drawn at. Keyword-only.
+    t_slow : int, optional
+        Round trips [dimensionless count] for the solver points overlaid on the
+        S-curve. Keyword-only.
+    n_tau : int, optional
+        Fast-time grid points for those points. Keyword-only.
+
+    Returns
+    -------
+    pathlib.Path
+        ``out_path``, for chaining.
+
+    Raises
+    ------
+    KeyError
+        If ``result`` is missing a field the figure plots.
+    OSError
+        If ``out_path`` cannot be written.
+    ImportError
+        If matplotlib is unavailable.
+
+    Notes
+    -----
+    Two panels: the bistable S-curve with the solver's own points on it, and
+    the relative-residual spectrum against BOTH exact references. Showing both
+    residuals together is the point -- the machine-precision agreement with the
+    discrete map and the 3e-3 mean-field gap to the continuum cubic are
+    different claims, and a single residual curve would conflate them.
+
+    No ``Examples`` section: it runs solver points for the S-curve overlay and
+    writes a file.
+    """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -287,6 +409,35 @@ def make_figure(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run the CW verification and render its figure from the command line.
+
+    Parameters
+    ----------
+    argv : sequence of str or None, optional
+        Command-line arguments; ``None`` (default) reads ``sys.argv[1:]``.
+
+    Returns
+    -------
+    int
+        The process exit status: 0 on success.
+
+    Raises
+    ------
+    SystemExit
+        From ``argparse`` on a malformed command line or ``--help``.
+    AssertionError
+        Propagated from :func:`validation.analytic_cw.verify` if a grid point
+        failed to settle.
+    ImportError
+        If matplotlib is unavailable.
+
+    Notes
+    -----
+    Runs the verification itself rather than reading a stored artifact, so the
+    figure cannot fall out of date with the numbers it plots.
+
+    No ``Examples`` section: every path runs the CW sweep.
+    """
     ap = argparse.ArgumentParser(
         prog="python -m validation.figures.fig_analytic_cw",
         description="Render the analytic-CW verification figure.",

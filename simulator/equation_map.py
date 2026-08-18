@@ -56,7 +56,88 @@ ADDITIVITY: tuple[str, ...] = ("additive", "multiplicative", "mixed")
 
 
 class ChannelEquation(NamedTuple):
-    """One noise/dynamics channel, from paper equation to pinning test."""
+    """One noise/dynamics channel, from paper equation to pinning test.
+
+    Parameters
+    ----------
+    channel : str
+        Matches a :class:`~simulator.noise_config.NoiseConfig` boolean field
+        EXACTLY, which is what lets the test suite enumerate the dataclass and
+        detect a channel added without a record here.
+    paper_eq : str
+        Equation label, e.g. ``"Eq. 126"``. Empty string means "not recorded in
+        this repository" -- never a guess.
+    paper_section : str
+        Section label, e.g. ``"Sec. V.B.2"``. Empty string as above.
+    arxiv_id : str
+        arXiv identifier of the reference, normally ``"2604.05897"``.
+    arxiv_version : str
+        Version pin, normally ``"v1"``. Mandatory: equation and section numbers
+        are version-specific.
+    equation_latex : str
+        The CONTINUUM equation, as the reference states it.
+    discrete_latex : str
+        The DISCRETIZED form actually implemented -- what the code computes.
+    code_symbol : str
+        Dotted path importable via :mod:`importlib` (module plus attribute
+        chain).
+    code_file : str
+        Repo-relative path of the file holding ``code_symbol``.
+    enters_as : str
+        One of :data:`ENTERS_AS`: where in the equation of motion the channel
+        acts.
+    additive_or_multiplicative : str
+        One of :data:`ADDITIVITY`, as seen by the intracavity field E.
+    colour : str
+        Spectrum of the injected quantity, e.g. ``"white"`` or
+        ``"lorentzian(tau_th)"``.
+    shares_random_source_with : tuple of str
+        Other channels drawing from the SAME realization. Must be symmetric --
+        if A names B, B must name A.
+    units : str
+        Units of the quantity actually injected, e.g. ``"rad/s"`` for a
+        detuning noise or ``"sqrt(J)"`` for a field increment.
+    validated_by : tuple of str
+        Names of the test functions in ``tests/`` that pin this channel.
+
+    Raises
+    ------
+    TypeError
+        From ``NamedTuple`` construction if any field is missing. The
+        module-local ``_eq`` helper fills the two arXiv fields, so table
+        entries only state what is channel-specific.
+
+    Notes
+    -----
+    A ``NamedTuple`` rather than a dataclass so that entries are immutable,
+    hashable and cheap to iterate over in table order, and so the record can be
+    unpacked positionally in a renderer.
+
+    Both LaTeX fields are carried because the distinction is the point of the
+    map: a reviewer checking an implementation needs the equation the paper
+    states AND the discretization that was actually integrated, since almost
+    every discrepancy between two codes lives in the gap between them.
+
+    Examples
+    --------
+    >>> entry = CHANNEL_EQUATIONS["quantum_vacuum"]
+    >>> entry.paper_eq, entry.paper_section
+    ('Eq. 126', 'Sec. V.B.2')
+    >>> entry.enters_as, entry.colour
+    ('additive field increment', 'white')
+    >>> entry.code_symbol
+    'simulator.lle_solver._qnoise_increment'
+
+    A gap is recorded as an empty string, never as a plausible guess:
+
+    >>> CHANNEL_EQUATIONS["trn"].paper_eq, CHANNEL_EQUATIONS["trn"].paper_section
+    ('Eqs. 129-130', '')
+
+    Shared random sources are stated symmetrically:
+
+    >>> CHANNEL_EQUATIONS["pyro_eo"].shares_random_source_with
+    ('trn', 'fsr')
+    """
 
     channel: str
     """Matches a :class:`~simulator.noise_config.NoiseConfig` boolean field exactly."""
@@ -399,10 +480,43 @@ def _md_escape(text: str) -> str:
 
 
 def render_markdown() -> str:
-    """Markdown table of every channel, for direct inclusion in a paper.
+    """Render the whole channel map as Markdown, for inclusion in a paper.
 
-    Emits the summary table plus a per-channel equation block (continuum and
-    discretized form), since LaTeX maths does not fit legibly in table cells.
+    Returns
+    -------
+    str
+        A Markdown document ending in exactly one newline: a heading, a
+        provenance line naming ``arXiv:2604.05897v1``, the summary table over
+        :data:`_COLUMNS`, and one per-channel block carrying the continuum and
+        discretized LaTeX.
+
+    Raises
+    ------
+    AttributeError
+        If :data:`_COLUMNS` names an attribute :class:`ChannelEquation` does not
+        have.
+
+    Notes
+    -----
+    The per-channel equation blocks are separate from the table because LaTeX
+    maths does not fit legibly in a table cell -- and shrinking the equations to
+    make them fit is exactly how a transcription error survives review.
+
+    Exactly one trailing newline is emitted, because
+    ``tests/test_equation_map.py`` compares this output byte-for-byte against
+    the committed document to catch a stale checked-in copy.
+
+    Examples
+    --------
+    >>> doc = render_markdown()
+    >>> doc.splitlines()[0]
+    '# Equation map'
+    >>> "arXiv:2604.05897v1" in doc
+    True
+    >>> doc.endswith(chr(10)) and not doc.endswith(chr(10) * 2)
+    True
+    >>> all(name in doc for name in CHANNEL_EQUATIONS)
+    True
     """
     ref = f"arXiv:{_ARXIV_ID}{_ARXIV_VERSION}"
     lines = [
@@ -479,11 +593,41 @@ def _latex_escape(text: str) -> str:
 
 
 def render_latex() -> str:
-    """booktabs table of every channel.
+    """Render the channel map as a booktabs LaTeX table.
 
-    Requires ``\\usepackage{booktabs}``. Emits a compact subset of the columns:
-    the full set does not fit a page width, and the maths lives in the
-    Markdown rendering / the module itself.
+    Returns
+    -------
+    str
+        A complete ``table`` environment ending in one newline, with a
+        generated-file banner, a caption citing ``arXiv:2604.05897v1`` and one
+        row per channel.
+
+    Raises
+    ------
+    AttributeError
+        If a column names an attribute :class:`ChannelEquation` does not have.
+
+    Notes
+    -----
+    Requires ``\\usepackage{booktabs}`` in the document preamble. Only a compact
+    subset of the columns is emitted: the full set does not fit a page width,
+    and the maths lives in :func:`render_markdown` and in this module.
+
+    Plain-text cells go through ``_latex_escape``, never the maths fields. That
+    escaping matters more than it looks: under the default OT1 font encoding a
+    bare ``|`` typesets as an em dash, which would silently turn the ``colour``
+    column's ``a | b | c`` alternatives into ``a -- b -- c`` in a printed table
+    with no error to notice.
+
+    Examples
+    --------
+    >>> tex = render_latex()
+    >>> tex.splitlines()[0]
+    '% Generated by simulator/equation_map.py -- do not edit by hand.'
+    >>> tex.count(chr(92) + "toprule"), tex.count(chr(92) + "bottomrule")
+    (1, 1)
+    >>> "arXiv:2604.05897v1" in tex
+    True
     """
     columns = (
         ("channel", "Channel"),

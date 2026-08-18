@@ -161,12 +161,53 @@ _CONFIG_LABELS = {
 def observed_order(
     errors: Sequence[float] | np.ndarray, dts: Sequence[float] | np.ndarray
 ) -> np.ndarray:
-    """Successive log-log slopes: ``log(e_i/e_{i+1}) / log(dt_i/dt_{i+1})``.
+    """Estimate the observed order from successive log-log slopes.
 
-    Returns an array of length ``len(errors) - 1``. Entries where either error
-    is non-positive (exact agreement, or round-off floor reached) come back as
-    ``nan`` rather than raising, so a spectral study that bottoms out is still
-    reportable.
+    Parameters
+    ----------
+    errors : sequence of float or numpy.ndarray
+        Error or successive-difference magnitudes [dimensionless], one per
+        refinement level, in the order the levels were run.
+    dts : sequence of float or numpy.ndarray
+        The step sizes [s] those errors were measured at, same shape as
+        ``errors``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Shape ``(len(errors) - 1,)``, dtype ``float64``, dimensionless:
+        ``log(e_i/e_{i+1}) / log(dt_i/dt_{i+1})``.
+
+    Raises
+    ------
+    ValueError
+        If ``errors`` and ``dts`` have different shapes, or if fewer than two
+        points are supplied.
+
+    Notes
+    -----
+    Entries where either error is non-positive -- exact agreement, or the
+    round-off floor reached -- come back as ``nan`` rather than raising, so a
+    spectral study that bottoms out is still reportable. Silently dropping
+    those points instead would let a study that measured nothing report a
+    healthy-looking order.
+
+    Examples
+    --------
+    Halving the step and halving the error is first order:
+
+    >>> observed_order([1e-2, 5e-3, 2.5e-3], [1e-9, 5e-10, 2.5e-10])
+    array([1., 1.])
+
+    Quartering the error at each halving is second order:
+
+    >>> observed_order([1e-2, 2.5e-3, 6.25e-4], [1e-9, 5e-10, 2.5e-10])
+    array([2., 2.])
+
+    A level that reached exact agreement is reported, not hidden:
+
+    >>> observed_order([1e-2, 0.0], [1e-9, 5e-10])
+    array([nan])
     """
     e = np.asarray(errors, dtype=np.float64)
     h = np.asarray(dts, dtype=np.float64)
@@ -229,6 +270,66 @@ def thermal_testbed_config(
     -- leading order, which is what the study needs.
 
     See the module docstring: this is a numerics testbed, not a device model.
+
+    Parameters
+    ----------
+    params : CavityParams
+        Resolved cavity constants of the operating point.
+    pin : float
+        Pump power [W] the study runs at. Keyword-only.
+    delta_omega : float
+        Operating detuning [rad/s]. Recorded for the calibration narrative; the
+        calibration itself targets the worst case ``delta_omega = 0``.
+        Keyword-only.
+    tau_th : float, optional
+        Thermal time constant [s] to impose, default 2e-9 -- short enough that
+        several thermal time constants fit inside the integration window.
+        Keyword-only.
+    worst_shift_over_kappa : float, optional
+        Target worst-case steady thermo-optic shift in units of ``kappa``
+        [dimensionless], default 10.0. Keyword-only.
+    source : str or pathlib.Path or None, optional
+        Committed config to derive from; ``None`` (default) uses
+        ``config/sin_params.yaml``. Keyword-only.
+    out_dir : str or pathlib.Path or None, optional
+        Directory for the derived file; ``None`` (default) writes a temp file.
+        Keyword-only.
+
+    Returns
+    -------
+    str
+        Path of the derived config.
+
+    Raises
+    ------
+    ValueError
+        If ``source`` has no ``physical_parameters`` block, or if the operating
+        point has zero absorbed power and cannot be calibrated.
+    AssertionError
+        If the derived config differs from the source in anything other than
+        exactly ``['mode_volume_m3', 'tau_th_s']``.
+    OSError
+        If the source cannot be read or the destination cannot be written.
+
+    Examples
+    --------
+    >>> import yaml
+    >>> from pathlib import Path
+    >>> from validation.mms import manufactured_solution
+    >>> sol = manufactured_solution()
+    >>> derived = thermal_testbed_config(sol.params, pin=sol.pin,
+    ...                                  delta_omega=sol.delta_omega)
+    >>> block = yaml.safe_load(Path(derived).read_text())["physical_parameters"]
+    >>> block["tau_th_s"]
+    2e-09
+
+    Exactly two leaves move, and ``dn_dT_per_k`` is not one of them -- the
+    thermo-optic pathway stays fully live:
+
+    >>> source = yaml.safe_load(
+    ...     Path("config/sin_params.yaml").read_text())["physical_parameters"]
+    >>> sorted(k for k in source if source[k] != block[k])
+    ['mode_volume_m3', 'tau_th_s']
     """
     src = Path(source) if source is not None else _REPO_ROOT / "config" / "sin_params.yaml"
     with src.open("r", encoding="utf-8") as fh:
@@ -339,13 +440,62 @@ def deterministic_study(
     thermal_coupling: str = "lagged",
     testbed_config: str | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """dt refinement over ``halvings`` halvings, for the three configurations.
+    """Refine dt over ``halvings`` halvings for the three thermal configurations.
 
-    Richardson successive differences (see the module docstring). Configuration
-    (a) runs on the thermo-optic-free config with the manufactured forcing, so
-    its differences are true discretization differences of the field alone;
-    (b) and (c) run on the thermal testbed config with the forcing off, and the
-    reported order is that of the coupled (field, ΔT) state.
+    Parameters
+    ----------
+    sol : MMSSolution or None, optional
+        Manufactured solution defining the operating point; ``None`` (default)
+        builds the standard one.
+    halvings : int, optional
+        Number of step halvings [dimensionless count], default
+        :data:`DEFAULT_HALVINGS`. The ladder runs
+        ``dt = t_r, t_r/2, ..., t_r/2**halvings`` [s]. Keyword-only.
+    n_tau : int, optional
+        Fast-time grid points, default
+        :data:`~validation.mms.DEFAULT_N_TAU`. Keyword-only.
+    t_slow : int, optional
+        Round trips per run, default :data:`DEFAULT_T_SLOW`. Keyword-only.
+    symmetric_drive : bool, optional
+        Solver flag; ``False`` (default) is the shipping scheme. Keyword-only.
+    thermal_coupling : {'lagged', 'strang'}, optional
+        Solver flag; ``'lagged'`` (default) is the shipping scheme.
+        Keyword-only.
+    testbed_config : str or None, optional
+        Path of the thermal testbed config; ``None`` (default) derives one via
+        :func:`thermal_testbed_config`. Keyword-only.
+
+    Returns
+    -------
+    dict of str to dict
+        Keyed by ``'a_field_only'``, ``'b_thermal_euler'`` and
+        ``'c_thermal_exponential'``. Each entry holds ``label``, ``dts`` [s],
+        ``errors`` (successive differences, dimensionless), ``orders``
+        (per-interval, dimensionless), ``order`` (asymptotic mean of the last
+        three), ``delta_T_final`` [K] and ``config_path``.
+
+    Raises
+    ------
+    ValueError
+        Propagated from the solver if a ``dt`` does not divide ``t_r``
+        an integer number of times.
+    AssertionError
+        Propagated from :func:`thermal_testbed_config`.
+
+    Notes
+    -----
+    Richardson successive differences. Configuration (a) runs on the
+    thermo-optic-free config WITH the manufactured forcing, so its differences
+    are true discretization differences of the field alone; (b) and (c) run on
+    the thermal testbed config with the forcing OFF, and the reported order is
+    that of the coupled ``(field, DeltaT)`` state.
+
+    Field and thermal differences are combined as a hypotenuse on a common
+    RELATIVE scale, so neither component can hide the other: reporting the
+    field difference alone would show second order for a coupled system whose
+    thermal lag caps it at first.
+
+    No ``Examples`` section: the ladder runs 3 x (halvings + 1) solves.
     """
     if sol is None:
         sol = manufactured_solution()
@@ -427,6 +577,46 @@ def spatial_study(
     spatial error at EVERY n_tau on this grid, so the study would show a flat
     line and measure nothing. This is the one study that is scheme-independent
     by construction, so it is run once rather than once per scheme.
+
+    Parameters
+    ----------
+    sol : MMSSolution or None, optional
+        Manufactured solution; ``None`` (default) builds the standard one.
+    n_taus : sequence of int, optional
+        Fast-time grid sizes to sweep, default
+        ``(16, 20, 24, 28, 32, 40, 48, 64)``. Keyword-only.
+    t_slow : int, optional
+        Round trips per run, default :data:`DEFAULT_T_SLOW`. Keyword-only.
+    fine_cadence_M : int, optional
+        Temporal refinement ``t_r/dt`` [dimensionless] held fixed across the
+        sweep, default 64. Keyword-only.
+    symmetric_drive : bool, optional
+        Solver flag, default ``True`` here -- see the note above on pushing the
+        temporal error out of the way. Keyword-only.
+
+    Returns
+    -------
+    dict
+        ``n_taus`` (int array), ``errors`` (relative L2 against the exact
+        solution, dimensionless), ``floor`` (the smallest error reached),
+        ``decades_before_floor`` and ``n_pre_floor``.
+
+    Raises
+    ------
+    ValueError
+        Propagated from :func:`~validation.mms.mms_error` if ``fine_cadence_M``
+        does not divide ``t_r`` an integer number of times.
+    ImportError
+        If sympy is unavailable.
+
+    Notes
+    -----
+    Spectral decay is measured over the PRE-FLOOR points only, defined as
+    ``errors > 10*floor``: once the temporal floor is reached the spatial error
+    is no longer observable, and fitting through those points would report a
+    decay rate that is really the temporal error's flatness.
+
+    No ``Examples`` section: the sweep runs one solve per ``n_tau``.
     """
     if sol is None:
         sol = manufactured_solution()
@@ -467,7 +657,49 @@ def mms_study(
     t_slow: int = DEFAULT_T_SLOW,
     symmetric_drive: bool = False,
 ) -> dict[str, Any]:
-    """Order against the EXACT manufactured solution — no extrapolation."""
+    """Measure the order against the EXACT manufactured solution -- no extrapolation.
+
+    Parameters
+    ----------
+    sol : MMSSolution or None, optional
+        Manufactured solution; ``None`` (default) builds the standard one.
+    halvings : int, optional
+        Number of step halvings [dimensionless count], default
+        :data:`DEFAULT_HALVINGS`. Keyword-only.
+    n_tau : int, optional
+        Fast-time grid points, default
+        :data:`~validation.mms.DEFAULT_N_TAU`. Keyword-only.
+    t_slow : int, optional
+        Round trips per run, default :data:`DEFAULT_T_SLOW`. Keyword-only.
+    symmetric_drive : bool, optional
+        Solver flag; ``False`` (default) is the shipping scheme. Keyword-only.
+
+    Returns
+    -------
+    dict
+        ``label``, ``dts`` [s], ``errors`` (relative L2 against the exact
+        solution, dimensionless), ``orders`` (per-interval) and ``order``
+        (asymptotic).
+
+    Raises
+    ------
+    ValueError
+        Propagated from :func:`~validation.mms.mms_error` for a ``dt`` that
+        does not divide ``t_r``.
+    ImportError
+        If sympy is unavailable.
+
+    Notes
+    -----
+    The strongest of the four studies. :func:`deterministic_study` measures
+    successive DIFFERENCES, which pin the order at which a scheme converges but
+    say nothing about WHAT it converges to; this one measures the error against
+    a known exact solution, so it pins the order and the limit together. A
+    scheme converging cleanly at second order to the wrong equation passes the
+    difference study and fails this one.
+
+    No ``Examples`` section: the ladder runs ``halvings + 1`` solves.
+    """
     if sol is None:
         sol = manufactured_solution()
     ms = [2 ** i for i in range(halvings + 1)]
@@ -518,6 +750,46 @@ def weak_study(
     deterministic order — it does not isolate the order of the noise
     discretization on its own. ``noise_fraction`` in the returned dict is that
     ratio, so the caveat is a measured quantity rather than a claim.
+
+    Parameters
+    ----------
+    sol : MMSSolution or None, optional
+        Manufactured solution defining the operating point; ``None`` (default)
+        builds the standard one.
+    n_realizations : int, optional
+        Monte-Carlo sample size [dimensionless count], default 256.
+        Keyword-only.
+    halvings : int, optional
+        Number of step halvings, default 4. Keyword-only.
+    n_tau : int, optional
+        Fast-time grid points, default 64. Keyword-only.
+    t_slow : int, optional
+        Round trips per run, default 100. Keyword-only.
+    symmetric_drive : bool, optional
+        Solver flag; ``False`` (default) is the shipping scheme. Keyword-only.
+    seed : int, optional
+        Master seed for the common random numbers, default 20260814.
+        Keyword-only.
+
+    Returns
+    -------
+    dict
+        The refinement series (``dts`` [s], ``errors``, ``orders``, ``order``)
+        together with ``n_realizations``, the Monte-Carlo uncertainty and
+        ``noise_fraction`` -- the measured ratio of the vacuum contribution to
+        the deterministic discretization error [dimensionless].
+
+    Raises
+    ------
+    ValueError
+        Propagated from the solver for a ``dt`` that does not divide ``t_r``.
+    ImportError
+        If sympy or JAX is unavailable.
+
+    Notes
+    -----
+    No ``Examples`` section: the study runs ``n_realizations x (halvings + 1)``
+    trajectories.
     """
     import jax
     from simulator.lle_solver import solve_lle_ssfm_jax
@@ -667,6 +939,38 @@ def _gate(result: dict[str, Any]) -> list[tuple[str, float, tuple[float, float],
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run the order-of-accuracy verification from the command line.
+
+    Parameters
+    ----------
+    argv : sequence of str or None, optional
+        Command-line arguments; ``None`` (default) reads ``sys.argv[1:]``.
+        Supports ``--report``, ``--halvings``, ``--n-tau``, ``--t-slow``,
+        ``--weak-realizations``, ``--skip-weak`` and ``--production-only``.
+
+    Returns
+    -------
+    int
+        The process exit status: 0 unless ``--report`` was given and a gate in
+        :data:`GATES` failed.
+
+    Raises
+    ------
+    SystemExit
+        From ``argparse`` on a malformed command line or ``--help``.
+    ImportError
+        If sympy is unavailable (the manufactured source cannot be derived).
+
+    Notes
+    -----
+    Without ``--report`` the studies run and print but the exit status is
+    always 0, so the module can be used interactively while ``--report`` makes
+    it a CI gate. By default it measures BOTH the shipping scheme and the fixed
+    one, since the finding this module exists to report is the difference
+    between them; ``--production-only`` measures the shipping scheme alone.
+
+    No ``Examples`` section: every path runs the full refinement ladders.
+    """
     ap = argparse.ArgumentParser(
         prog="python -m validation.convergence",
         description="Order-of-accuracy verification for the LLE solver.",

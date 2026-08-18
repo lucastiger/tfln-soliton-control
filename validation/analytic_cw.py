@@ -175,6 +175,30 @@ FLATNESS_SAFETY = 8.0
 def flatness_floor(kappa: float, dt: float, safety: float = FLATNESS_SAFETY) -> float:
     """Smallest tail peak-to-peak a converged float64 CW run can achieve.
 
+    Parameters
+    ----------
+    kappa : float
+        Total cavity loss rate [rad/s].
+    dt : float
+        Field sub-step [s], i.e. ``t_r/n_substeps``.
+    safety : float, optional
+        Multiplier on the derived floor [dimensionless], default
+        :data:`FLATNESS_SAFETY` (8.0).
+
+    Returns
+    -------
+    float
+        Relative peak-to-peak [dimensionless] below which a stationarity test
+        would be testing floating-point noise rather than convergence.
+
+    Raises
+    ------
+    ValueError
+        If ``kappa*dt`` is not positive, which would make the map
+        non-contracting and the geometric sum divergent.
+
+    Notes
+    -----
     A converged fixed point does not sit still in floating point: it executes a
     small limit cycle driven by rounding. Per sub-step the map contracts a
     perturbation by ``|L| = exp(-kappa*dt/2)`` and rounding re-injects a
@@ -194,6 +218,24 @@ def flatness_floor(kappa: float, dt: float, safety: float = FLATNESS_SAFETY) -> 
     differences without loosening the check to the point of meaninglessness:
     the default floor, ~5.8e-13, is still four orders below the 3e-3 mean-field
     residual and would catch any genuinely drifting or oscillating state.
+
+    Examples
+    --------
+    >>> params = load_cavity_params()
+    >>> print(f"{flatness_floor(params.kappa, params.t_r):.4e}")
+    5.7632e-13
+
+    Refining the sub-step contracts less per step, so the achievable floor
+    RISES -- which is why the bound must be derived rather than fixed:
+
+    >>> bool(flatness_floor(params.kappa, params.t_r / 8)
+    ...      > flatness_floor(params.kappa, params.t_r))
+    True
+
+    >>> flatness_floor(0.0, 1e-11)
+    Traceback (most recent call last):
+        ...
+    ValueError: kappa*dt must be positive (got 0.0).
     """
     contraction = -math.expm1(-float(kappa) * float(dt) / 2.0)   # 1 - |L|
     if contraction <= 0.0:
@@ -208,9 +250,48 @@ def flatness_floor(kappa: float, dt: float, safety: float = FLATNESS_SAFETY) -> 
 class CavityParams:
     """Resolved cavity constants plus the derived thermo-optic-free config.
 
-    ``config_path`` is the path handed to ``solve_lle_ssfm_jax`` — the derived
-    config of :func:`thermal_off_config`, NOT the committed one. Every other
-    field is read from the committed config unchanged.
+    Parameters
+    ----------
+    kappa : float
+        Total loss rate [rad/s].
+    kappa_c : float
+        Coupling rate [rad/s].
+    kappa_i : float
+        Intrinsic loss rate [rad/s].
+    gamma : float
+        ``gamma_LLE`` [J^-1 s^-1].
+    t_r : float
+        Round-trip time [s].
+    p_th : float
+        Modulation-instability threshold pump power [W]; see
+        :func:`p_threshold`.
+    config_path : str
+        Path of the DERIVED (``dn_dT_per_k = 0``) config handed to the solver.
+    source_config : str
+        Path of the committed config it was derived from.
+
+    Raises
+    ------
+    dataclasses.FrozenInstanceError
+        On any attempt to mutate an instance.
+
+    Notes
+    -----
+    ``config_path`` is the path handed to
+    :func:`~simulator.lle_solver.solve_lle_ssfm_jax` -- the derived config of
+    :func:`thermal_off_config`, NOT the committed one. Every other field is
+    read from the committed config unchanged, and ``source_config`` records
+    which one, so a result can be traced back to its inputs.
+
+    Examples
+    --------
+    >>> params = load_cavity_params()
+    >>> bool(abs(params.kappa - (params.kappa_i + params.kappa_c)) < 1.0)
+    True
+    >>> params.source_config.endswith("sin_params.yaml")
+    True
+    >>> params.config_path != params.source_config
+    True
     """
 
     kappa: float          # total loss rate, rad/s
@@ -224,12 +305,48 @@ class CavityParams:
 
 
 def p_threshold(kappa: float, kappa_c: float, gamma: float) -> float:
-    """MI-onset pump power ``P_th = kappa^3 / (8*gamma*kappa_c)`` [W].
+    """Return the modulation-instability onset pump power.
 
-    The same expression the solver's own pre-flight check uses
-    (``lle_solver.py``, ``_p_th``): setting ``gamma*U_cw = kappa/2`` at
-    ``delta_omega = 0`` with ``U_cw = kappa_c*pin/(kappa/2)^2``. |E|^2 is
-    already in joules, so there is no stray 1/t_r.
+    Parameters
+    ----------
+    kappa : float
+        Total cavity loss rate [rad/s].
+    kappa_c : float
+        Coupling rate [rad/s].
+    gamma : float
+        ``gamma_LLE`` [J^-1 s^-1].
+
+    Returns
+    -------
+    float
+        ``P_th = kappa**3 / (8*gamma*kappa_c)`` [W].
+
+    Raises
+    ------
+    ZeroDivisionError
+        If ``gamma`` or ``kappa_c`` is zero.
+
+    Notes
+    -----
+    The same expression the solver's own pre-flight check uses: setting
+    ``gamma*U_cw = kappa/2`` at ``delta_omega = 0`` with
+    ``U_cw = kappa_c*pin/(kappa/2)**2``. Because ``|E|**2`` is already in
+    joules in this normalization there is no stray ``1/t_r`` -- the factor that
+    makes this expression disagree with the power-normalized form quoted in
+    most of the literature.
+
+    This is the unit every pump power in the study is expressed in, so that a
+    sweep reads the same whatever cavity it is run on.
+
+    Examples
+    --------
+    >>> print(f"{p_threshold(1e9, 5e8, 1e18):.4e} W")
+    2.5000e-01 W
+
+    Threshold falls as the nonlinearity rises:
+
+    >>> p_threshold(1e9, 5e8, 2e18) == p_threshold(1e9, 5e8, 1e18) / 2
+    True
     """
     return kappa ** 3 / (8.0 * gamma * kappa_c)
 
@@ -239,6 +356,33 @@ def thermal_off_config(
 ) -> str:
     """Derive a config identical to ``source`` except ``dn_dT_per_k = 0.0``.
 
+    Parameters
+    ----------
+    source : str or pathlib.Path or None, optional
+        Committed config to derive from. ``None`` (default) uses
+        ``config/sin_params.yaml``.
+    out_dir : str or pathlib.Path or None, optional
+        Directory for the derived file. ``None`` (default) writes a temp file.
+        Keyword-only.
+
+    Returns
+    -------
+    str
+        Path of the derived config, suitable as ``config_path`` for
+        :func:`~simulator.lle_solver.solve_lle_ssfm_jax`.
+
+    Raises
+    ------
+    ValueError
+        If ``source`` has no ``physical_parameters`` block.
+    AssertionError
+        If the YAML round trip changed the key set, perturbed any numeric leaf
+        other than ``dn_dT_per_k``, or failed to zero ``dn_dT_per_k``.
+    OSError
+        If ``source`` cannot be read or the destination cannot be written.
+
+    Notes
+    -----
     The thermo-optic detuning shift in the solver is
     ``-(omega0/n0)*dn_dT*DeltaT``; zeroing ``dn_dT`` makes it identically zero
     for every DeltaT, which decouples the (still-running, still-harmless)
@@ -250,6 +394,27 @@ def thermal_off_config(
     file (or ``out_dir``); every numeric leaf is asserted to survive the YAML
     round trip bit-for-bit, so the derived config differs from the source in
     exactly one leaf.
+
+    Checking every leaf rather than trusting the round trip is the point: a
+    float that did not survive ``safe_dump`` -> ``safe_load`` unchanged would
+    silently perturb the physics of a comparison whose whole claim is
+    machine precision.
+
+    Examples
+    --------
+    >>> import yaml
+    >>> from pathlib import Path
+    >>> derived = thermal_off_config()
+    >>> block = yaml.safe_load(Path(derived).read_text())["physical_parameters"]
+    >>> block["dn_dT_per_k"]
+    0.0
+
+    Every other leaf is unchanged, and the committed config is untouched:
+
+    >>> source = yaml.safe_load(
+    ...     Path("config/sin_params.yaml").read_text())["physical_parameters"]
+    >>> sorted(k for k in source if source[k] != block[k])
+    ['dn_dT_per_k']
     """
     src = Path(source) if source is not None else _REPO_ROOT / "config" / "sin_params.yaml"
     with src.open("r", encoding="utf-8") as fh:
@@ -298,7 +463,52 @@ def thermal_off_config(
 def load_cavity_params(
     config_path: str | Path | None = None, *, out_dir: str | Path | None = None
 ) -> CavityParams:
-    """Resolve (kappa, kappa_c, kappa_i, gamma, t_r, P_th) and derive the config."""
+    """Resolve the cavity constants and derive the thermo-optic-free config.
+
+    Parameters
+    ----------
+    config_path : str or pathlib.Path or None, optional
+        Committed config to read. ``None`` (default) uses
+        ``config/sin_params.yaml``.
+    out_dir : str or pathlib.Path or None, optional
+        Directory for the derived config; ``None`` (default) writes a temp
+        file. Keyword-only.
+
+    Returns
+    -------
+    CavityParams
+        ``kappa``, ``kappa_c``, ``kappa_i`` [rad/s], ``gamma`` [J^-1 s^-1],
+        ``t_r`` [s], ``p_th`` [W], plus the derived and source config paths.
+
+    Raises
+    ------
+    ValueError
+        Propagated from :func:`~simulator.lle_solver.resolve_cavity_rates` if
+        the intrinsic loss cannot be resolved, or from
+        :func:`thermal_off_config`.
+    KeyError
+        If ``gamma_LLE_per_J_per_s`` or ``fsr_hz`` is absent.
+    OSError
+        If the config cannot be read or the derived config cannot be written.
+
+    Notes
+    -----
+    The single entry point for every module in the validation harness that
+    needs cavity constants, so all of them agree by construction. Deriving the
+    thermo-optic-free config HERE rather than at each call site is what
+    guarantees no study accidentally runs against the committed config and
+    picks up a thermal shift the analytic reference does not model.
+
+    Examples
+    --------
+    >>> params = load_cavity_params()
+    >>> bool(params.kappa > 0 and params.gamma > 0 and params.t_r > 0)
+    True
+    >>> from validation.analytic_cw import p_threshold
+    >>> bool(abs(params.p_th - p_threshold(params.kappa, params.kappa_c,
+    ...                                    params.gamma)) < 1e-18)
+    True
+    """
     src = Path(config_path) if config_path is not None else _REPO_ROOT / "config" / "sin_params.yaml"
     kappa_i, kappa_c, kappa = resolve_cavity_rates(src)
     physical = _load_config(src)
@@ -397,23 +607,80 @@ def analytic_cw_roots(
     kappa_c: float,
     gamma: float,
 ) -> np.ndarray:
-    """Real positive roots of the CW steady state, ascending, in joules.
+    """Solve the continuum CW steady state for its real positive roots.
 
-    Solves ``P*[(kappa/2)^2 + (delta_omega - gamma*P)^2] = kappa_c*pin`` for
-    ``P = |E|^2`` [J]. One root outside the bistable region, three inside it
-    (the middle one is the unstable branch).
+    Parameters
+    ----------
+    pin : float
+        Pump power [W].
+    delta_omega : float
+        Detuning ``omega_res - omega_pump`` [rad/s]; positive is red-detuned,
+        the soliton side.
+    kappa : float
+        Total loss rate [rad/s].
+    kappa_c : float
+        Coupling rate [rad/s].
+    gamma : float
+        ``gamma_LLE`` [J^-1 s^-1].
 
-    Args:
-        pin: pump power [W].
-        delta_omega: detuning ``omega_res - omega_pump`` [rad/s]; positive is
-            red-detuned, the soliton side.
-        kappa: total loss rate [rad/s].
-        kappa_c: coupling rate [rad/s].
-        gamma: ``gamma_LLE`` [J^-1 s^-1].
-
-    Returns:
-        ``np.ndarray`` of real positive roots, sorted ascending. Empty only for
+    Returns
+    -------
+    numpy.ndarray
+        Real positive roots ``P = |E|**2`` [J], dtype ``float64``, sorted
+        ascending. Shape ``(1,)`` outside the bistable region and ``(3,)``
+        inside it, with the middle root the unstable branch. Empty only for
         ``pin <= 0``.
+
+    Raises
+    ------
+    ValueError
+        If ``kappa`` or ``gamma`` is not positive.
+
+    Notes
+    -----
+    Solves the homogeneous steady state of the LLE,
+
+        P * [(kappa/2)**2 + (delta_omega - gamma*P)**2] = kappa_c * pin,
+
+    which is the PHYSICS target of the whole module: the continuum reference
+    the solver is compared against.
+
+    The cubic is solved in NORMALIZED, DEPRESSED form. With
+    ``x = 2*gamma*P/kappa`` and ``d = 2*delta_omega/kappa`` it becomes
+    ``x*[1 + (d - x)**2] = pin/P_th``, whose coefficients are O(1) instead of
+    spanning the 1e36 dynamic range of the dimensional form
+    (``gamma**2 ~ 1e36`` against ``kappa_c*pin ~ 1e-3``). Conditioning is the
+    whole reason for the change of variables: a reference that loses digits is
+    not a reference at machine precision.
+
+    Examples
+    --------
+    >>> params = load_cavity_params()
+    >>> args = (params.kappa, params.kappa_c, params.gamma)
+
+    On resonance at threshold the response is single-valued:
+
+    >>> analytic_cw_roots(params.p_th, 0.0, *args).size
+    1
+
+    Far red-detuned and well above threshold it is bistable:
+
+    >>> roots = analytic_cw_roots(10 * params.p_th, 5 * params.kappa, *args)
+    >>> roots.size
+    3
+    >>> bool(roots[0] < roots[1] < roots[2])
+    True
+
+    Every root satisfies the steady-state equation to machine precision:
+
+    >>> import numpy as np
+    >>> lhs = roots * ((params.kappa / 2) ** 2
+    ...                + (5 * params.kappa - params.gamma * roots) ** 2)
+    >>> bool(np.all(np.abs(lhs / (params.kappa_c * 10 * params.p_th) - 1) < 1e-9))
+    True
+
+    >>> analytic_cw_roots(0.0, 0.0, *args).size
+    0
     """
     pin = float(pin)
     kappa = float(kappa)
@@ -456,12 +723,47 @@ def stable_branch(
 
     A downward scan is the mirror image and sits on the smallest root.
 
-    Args:
-        roots: output of :func:`analytic_cw_roots` (ascending).
-        scan_direction: ``"up"`` (default) or ``"down"``.
+    Parameters
+    ----------
+    roots : sequence of float or numpy.ndarray
+        Ascending roots [J], as returned by :func:`analytic_cw_roots`.
+    scan_direction : {'up', 'down'}, optional
+        Direction of the slow detuning scan; ``'up'`` (default) is the
+        blue-to-red scan used for soliton access.
 
-    Returns:
-        The selected root [J].
+    Returns
+    -------
+    float
+        The selected root ``|E|**2`` [J].
+
+    Raises
+    ------
+    ValueError
+        If ``roots`` is empty, or if ``scan_direction`` is neither ``'up'`` nor
+        ``'down'``.
+
+    Examples
+    --------
+    >>> params = load_cavity_params()
+    >>> roots = analytic_cw_roots(10 * params.p_th, 5 * params.kappa,
+    ...                           params.kappa, params.kappa_c, params.gamma)
+    >>> stable_branch(roots, "up") == float(roots[-1])
+    True
+    >>> stable_branch(roots, "down") == float(roots[0])
+    True
+
+    Outside the bistable window both directions agree, since there is only one
+    branch to be on:
+
+    >>> single = analytic_cw_roots(params.p_th, 0.0, params.kappa,
+    ...                            params.kappa_c, params.gamma)
+    >>> stable_branch(single, "up") == stable_branch(single, "down")
+    True
+
+    >>> stable_branch(roots, "sideways")
+    Traceback (most recent call last):
+        ...
+    ValueError: scan_direction must be 'up' or 'down', got 'sideways'.
     """
     arr = np.asarray(roots, dtype=np.float64)
     if arr.size == 0:
@@ -519,12 +821,65 @@ def discrete_map_cw_fixed_point(
     Newton on ``g(Q) = Q*|1-L(Q)|^2 - (F*dt)^2`` converges in a handful of
     iterations from the continuum root, which is within ~0.3% of the answer.
 
-    Args:
-        dt: the solver's field sub-step, ``t_r / (fine_cadence_M * n_substeps)``.
-        p_guess: starting |E|^2 [J]; defaults to the upward-scan continuum root.
+    Parameters
+    ----------
+    pin : float
+        Pump power [W].
+    delta_omega : float
+        Detuning ``omega_res - omega_pump`` [rad/s].
+    kappa : float
+        Total loss rate [rad/s].
+    kappa_c : float
+        Coupling rate [rad/s].
+    gamma : float
+        ``gamma_LLE`` [J^-1 s^-1].
+    dt : float
+        The solver's field sub-step [s],
+        ``t_r/(fine_cadence_M * n_substeps)``.
+    p_guess : float or None, optional
+        Starting ``|E|**2`` [J]. ``None`` (default) uses the upward-scan
+        continuum root. Keyword-only.
 
-    Returns:
-        ``|E|^2`` [J] at the exact fixed point of the discrete map.
+    Returns
+    -------
+    float
+        ``|E|**2`` [J] at the exact fixed point of the discrete map. Zero when
+        the continuum problem has no positive root (``pin <= 0``).
+
+    Raises
+    ------
+    RuntimeError
+        If Newton did not converge to a relative residual below 1e-11, naming
+        the operating point. A reference that quietly returned a
+        half-converged value would be worse than none.
+    ValueError
+        Propagated from :func:`analytic_cw_roots` for a non-positive ``kappa``
+        or ``gamma``.
+
+    Notes
+    -----
+    This is the INTEGRATOR target, as distinct from the physics target of
+    :func:`analytic_cw_roots`. The gap between the two is the mean-field
+    (Ikeda-map to LLE) truncation of the splitting -- first order in dt and of
+    size ``~kappa*t_r/2 = 3.1e-3`` at the committed parameters -- so it is
+    measured, not assumed, and only this reference can be gated at 1e-12.
+
+    Examples
+    --------
+    >>> params = load_cavity_params()
+    >>> args = (params.kappa, params.kappa_c, params.gamma)
+    >>> pin, dw = 10 * params.p_th, 5 * params.kappa
+    >>> continuum = stable_branch(analytic_cw_roots(pin, dw, *args), "up")
+    >>> discrete = discrete_map_cw_fixed_point(pin, dw, *args, params.t_r)
+    >>> print(f"{abs(discrete - continuum) / continuum:.2e}")   # ~kappa*t_r/2
+    3.08e-03
+
+    Refining the sub-step drives the two together at first order:
+
+    >>> refined = discrete_map_cw_fixed_point(pin, dw, *args, params.t_r / 8)
+    >>> gap = abs(discrete - continuum) / abs(refined - continuum)
+    >>> bool(7.0 < gap < 9.0)
+    True
     """
     pin = float(pin)
     dt = float(dt)
@@ -591,8 +946,61 @@ def solver_cw_steady_state(
     seed_power: Sequence[float] | np.ndarray | None = None,
     return_diagnostics: bool = False,
 ) -> np.ndarray | tuple[np.ndarray, dict[str, np.ndarray]]:
-    """Converge ``solve_lle_ssfm_jax`` to its CW fixed point and return |E|^2 [J].
+    """Converge the solver to its CW fixed point and return the field power.
 
+    Parameters
+    ----------
+    pin : float
+        Pump power [W].
+    delta_omega : float or sequence of float or numpy.ndarray
+        Scalar or 1-D array of detunings [rad/s].
+    params : CavityParams
+        Resolved cavity constants; supplies the derived thermo-optic-free
+        config.
+    t_slow : int, optional
+        Round trips [dimensionless count], default :data:`DEFAULT_T_SLOW`.
+        Keyword-only.
+    n_tau : int, optional
+        Fast-time grid points, default :data:`DEFAULT_N_TAU`. Keyword-only.
+    n_substeps : int, optional
+        Field sub-steps per round trip, default 1 (the production path).
+        Keyword-only.
+    scan_direction : {'up', 'down'}, optional
+        Which analytic branch to seed from; see :func:`stable_branch`.
+        Keyword-only.
+    seed_perturbation : float, optional
+        Multiplicative offset [dimensionless] applied to the seed amplitude,
+        default 1.02. Keyword-only.
+    flatness_rtol : float or None, optional
+        Required relative peak-to-peak [dimensionless] of the last 10% of
+        ``U_int_history``. ``None`` (default) uses :func:`flatness_floor`.
+        Keyword-only.
+    seed_power : sequence of float or numpy.ndarray or None, optional
+        Explicit seed powers [J], one per detuning, overriding the analytic
+        branch. Used to probe a chosen branch. Keyword-only.
+    return_diagnostics : bool, optional
+        Also return per-detuning ``tail_flatness`` [dimensionless] and the
+        final ``u_int`` [J*s]. Keyword-only.
+
+    Returns
+    -------
+    numpy.ndarray or tuple
+        ``|E|**2`` [J], shape ``(n_detuning,)``; or that array together with a
+        diagnostics dict when ``return_diagnostics`` is set.
+
+    Raises
+    ------
+    ValueError
+        If ``delta_omega`` is not scalar or 1-D, or if ``seed_power`` does not
+        match its shape.
+    AssertionError
+        If the run did not settle -- the last 10% of ``U_int_history`` has a
+        relative peak-to-peak above ``flatness_rtol`` -- naming the worst
+        detuning. Either the settle time is too short or the seeded branch is
+        not stable.
+
+    Notes
+    -----
     All stochastic channels off (``NoiseConfig.all_off()``), zero dispersion
     (``beta = [0.0, 0.0]``), thermo-optic feedback neutralized via
     ``params.config_path``, flat initial condition.
@@ -607,29 +1015,13 @@ def solver_cw_steady_state(
     All detunings are solved in ONE batched (vmapped) call, which is what keeps
     the 405-point sweep at ~80 s.
 
-    Args:
-        pin: pump power [W].
-        delta_omega: scalar or 1-D array of detunings [rad/s].
-        params: resolved :class:`CavityParams` (supplies the derived config).
-        t_slow: round trips.
-        n_tau: fast-time grid points.
-        n_substeps: field sub-steps per round trip (1 = the production path).
-        scan_direction: which analytic branch to seed from; see
-            :func:`stable_branch`.
-        seed_perturbation: multiplicative offset applied to the seed amplitude.
-        flatness_rtol: the last 10% of ``U_int_history`` must be flat to this
-            relative peak-to-peak. Raises ``AssertionError`` otherwise.
-            ``None`` (default) uses :func:`flatness_floor`, the derived float64
-            stationarity floor of the iteration — a fixed 1e-14 is BELOW that
-            floor at these parameters and is unreachable at any settle time.
-        seed_power: optional explicit seed powers [J], one per detuning,
-            overriding the analytic branch (used to probe a chosen branch).
-        return_diagnostics: also return per-detuning ``tail_flatness`` and the
-            final ``U_int``.
+    ``U_int`` is the intracavity energy in J*s, so the flat-state field power
+    is recovered as ``U_int/t_r`` [J].
 
-    Returns:
-        ``np.ndarray`` of ``|E|^2`` [J], one per detuning; plus a diagnostics
-        dict when ``return_diagnostics`` is set.
+    No ``Examples`` section: a single call runs 60000 round trips to reach the
+    stationarity floor, which is exactly the long solve a doctest must not
+    contain. :func:`verify` drives it over the acceptance grid, and
+    ``tests/test_analytic_cw.py`` exercises it end to end.
     """
     import jax                                          # local: heavy import
 
@@ -727,18 +1119,64 @@ def verify(
     The grid is ``detuning_grid`` (in units of kappa) crossed with
     ``pin_multipliers`` (in units of P_th) — 81 x 5 = 405 points by default.
 
-    ``rtol`` gates the DISCRETE-MAP residual, which is the machine-precision
-    claim (see the module docstring: the continuum residual is a genuine
-    first-order-in-dt mean-field error of ~3e-3 and cannot be gated at 1e-12).
-    The continuum residual is measured and returned regardless.
+    Parameters
+    ----------
+    rtol : float, optional
+        Gate on the DISCRETE-MAP residual [dimensionless], default 1e-12.
+    params : CavityParams or None, optional
+        Resolved cavity constants; ``None`` (default) calls
+        :func:`load_cavity_params`. Keyword-only.
+    detuning_grid : sequence of float or numpy.ndarray, optional
+        Detunings in units of ``kappa`` [dimensionless], default
+        :data:`DEFAULT_DETUNING_GRID`. Keyword-only.
+    pin_multipliers : sequence of float, optional
+        Pump powers in units of ``P_th`` [dimensionless], default
+        :data:`DEFAULT_PIN_MULTIPLIERS`. Keyword-only.
+    t_slow : int, optional
+        Round trips per solver run, default :data:`DEFAULT_T_SLOW`.
+        Keyword-only.
+    n_tau : int, optional
+        Fast-time grid points, default :data:`DEFAULT_N_TAU`. Keyword-only.
+    n_substeps : int, optional
+        Field sub-steps per round trip, default 1. Keyword-only.
+    scan_direction : {'up', 'down'}, optional
+        Branch to seed from, default ``'up'``. Keyword-only.
 
-    Returns:
-        A dict with, per point, ``delta_over_kappa``, ``pin_over_pth``,
-        ``p_analytic`` (continuum branch), ``p_discrete`` (exact map fixed
-        point), ``p_solver``, ``n_roots``, ``tail_flatness``, and the two
-        residual arrays ``rel_continuum`` / ``rel_discrete`` — all shaped
-        ``(n_pin, n_detuning)`` — plus the scalar summaries ``max_rel_discrete``
-        / ``max_rel_continuum`` with their argmax coordinates, and ``passed``.
+    Returns
+    -------
+    dict
+        Per point (all shaped ``(n_pin, n_detuning)``): ``p_analytic`` [J]
+        (continuum branch), ``p_discrete`` [J] (exact map fixed point),
+        ``p_solver`` [J], ``n_roots``, ``tail_flatness`` [dimensionless] and
+        the residual arrays ``rel_continuum`` / ``rel_discrete``
+        [dimensionless]. Plus the axes ``delta_over_kappa``, ``pin_over_pth``,
+        ``delta_omega`` [rad/s]; the scalar summaries ``max_rel_discrete`` /
+        ``max_rel_continuum`` with their argmax coordinates
+        ``(pin_over_pth, delta_over_kappa)``; ``median_rel_discrete``,
+        ``max_tail_flatness``, ``flatness_floor``, ``n_bistable``,
+        ``n_points``; the echoed settings; and ``passed``.
+
+    Raises
+    ------
+    AssertionError
+        Propagated from :func:`solver_cw_steady_state` if any point failed to
+        settle.
+    RuntimeError
+        Propagated from :func:`discrete_map_cw_fixed_point` if Newton failed at
+        any point.
+
+    Notes
+    -----
+    The grid is ``detuning_grid`` (in units of kappa) crossed with
+    ``pin_multipliers`` (in units of P_th) -- 81 x 5 = 405 points by default.
+
+    ``rtol`` gates the DISCRETE-MAP residual, which is the machine-precision
+    claim: the continuum residual is a genuine first-order-in-dt mean-field
+    error of ~3e-3 and cannot be gated at 1e-12. The continuum residual is
+    measured and returned regardless, because characterizing it is the point --
+    see :func:`mean_field_order_check`.
+
+    No ``Examples`` section: the default grid runs 405 converged solves.
     """
     if params is None:
         params = load_cavity_params()
@@ -830,9 +1268,50 @@ def mean_field_order_check(
     number: a change to the splitting scheme moves the ORDER, which this
     catches, while an unrelated parameter change moves only the prefactor.
 
-    Returns a dict with ``substeps``, ``rel_continuum``, ``ratios`` (successive
-    residual ratios, ~2 for first order at doubling), and the fitted
-    ``order`` from a log-log least squares.
+    Parameters
+    ----------
+    params : CavityParams or None, optional
+        Resolved cavity constants; ``None`` (default) calls
+        :func:`load_cavity_params`.
+    delta_over_kappa : float, optional
+        Operating detuning in units of ``kappa`` [dimensionless], default 2.0.
+        Keyword-only.
+    pin_over_pth : float, optional
+        Operating pump power in units of ``P_th`` [dimensionless], default 1.0.
+        Keyword-only.
+    substeps : sequence of int, optional
+        Refinement ladder ``n_substeps`` [dimensionless], default
+        ``(1, 2, 4, 8)``. Keyword-only.
+    t_slow : int, optional
+        Round trips per run, default 40000. Keyword-only.
+    n_tau : int, optional
+        Fast-time grid points, default :data:`DEFAULT_N_TAU`. Keyword-only.
+
+    Returns
+    -------
+    dict
+        ``substeps`` (int array), ``rel_continuum`` (residual per level,
+        dimensionless), ``ratios`` (successive residual ratios -- ~2 for first
+        order at doubling), ``order`` (fitted from a log-log least squares),
+        and the echoed operating point.
+
+    Raises
+    ------
+    AssertionError
+        Propagated from :func:`solver_cw_steady_state` if a level did not
+        settle.
+    numpy.linalg.LinAlgError
+        Propagated from ``numpy.polyfit`` for a degenerate ladder.
+
+    Notes
+    -----
+    The continuum residual is a SPLITTING error, so it must fall like
+    ``1/n_substeps``. Measuring the exponent rather than pinning a magnitude is
+    what makes the reported 3e-3 a characterization instead of a magic number:
+    a change to the splitting scheme moves the ORDER, which this catches, while
+    an unrelated parameter change moves only the prefactor.
+
+    No ``Examples`` section: the ladder runs four 40000-round-trip solves.
     """
     if params is None:
         params = load_cavity_params()
@@ -981,6 +1460,37 @@ def _print_order_check(order: dict[str, Any]) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run the CW verification from the command line.
+
+    Parameters
+    ----------
+    argv : sequence of str or None, optional
+        Command-line arguments; ``None`` (default) reads ``sys.argv[1:]``.
+        Supports ``--rtol``, ``--t-slow``, ``--n-tau``, ``--n-substeps``,
+        ``--config``, ``--full``, ``--quick`` and ``--no-order-check``.
+
+    Returns
+    -------
+    int
+        0 if the discrete-map residual is within ``--rtol`` at every grid
+        point, 1 otherwise -- the process exit status.
+
+    Raises
+    ------
+    SystemExit
+        From ``argparse`` on a malformed command line or ``--help``.
+    AssertionError
+        Propagated from :func:`verify` if a point failed to settle.
+
+    Notes
+    -----
+    Prints the report to stdout and returns a status rather than asserting, so
+    the module doubles as a CI gate (``python -m validation.analytic_cw``) and
+    as an interactive tool. ``--quick`` reduces the grid to 21 x 2 points at
+    ``t_slow = 20000``.
+
+    No ``Examples`` section: every path runs the full sweep.
+    """
     ap = argparse.ArgumentParser(
         prog="python -m validation.analytic_cw",
         description=(

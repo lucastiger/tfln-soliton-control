@@ -38,6 +38,34 @@ PYLLE_V2_SPREAD = 0.2258
 
 
 def main() -> int:
+    """Render the existence-edge refinement figure from the committed artifacts.
+
+    Returns
+    -------
+    int
+        The process exit status: 0 on success.
+
+    Raises
+    ------
+    FileNotFoundError
+        If ``validation/results/existence_convergence_ours.json`` is absent --
+        the study must have been run first.
+    KeyError
+        If the artifact predates a field the figure plots.
+    OSError
+        If the output image cannot be written.
+    ImportError
+        If matplotlib is unavailable.
+
+    Notes
+    -----
+    Reads the COMMITTED artifact rather than re-running the bisections, which
+    take hours. The figure shows the edge midpoints and their bracket
+    half-widths per refinement level, so a reader can see directly whether the
+    edge moved or merely the resolution improved.
+
+    No ``Examples`` section: it reads a committed artifact and writes a file.
+    """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
