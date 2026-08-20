@@ -1,16 +1,16 @@
 {
   "@context": "https://doi.org/10.5063/schema/codemeta-2.0",
   "@type": "SoftwareSourceCode",
-  "identifier": "soliton-control",
-  "name": "soliton-control: a validated stochastic Lugiato-Lefever benchmark",
+  "identifier": "stochastic-lle",
+  "name": "stochastic-lle: a validated stochastic Lugiato-Lefever benchmark",
   "description": "A JAX split-step Fourier solver for the Lugiato-Lefever equation with physically normalized stochastic channels -- quantum vacuum, thermorefractive, pyroelectric-electro-optic, thermal-carrier, pump frequency noise and pump RIN -- together with the verification suite that makes their attribution falsifiable: exact-CW and manufactured-solution convergence, a pyLLE cross-check, hash-pinned golden trajectories, and a per-channel noise budget computed with common random numbers.",
   "version": "1.0.0",
   "softwareVersion": "1.0.0",
   "dateModified": "2026-08-17",
   "datePublished": "2026-08-17",
   "license": "https://spdx.org/licenses/MIT",
-  "codeRepository": "https://github.com/lucastiger/soliton-control",
-  "issueTracker": "https://github.com/lucastiger/soliton-control/issues",
+  "codeRepository": "https://github.com/lucastiger/stochastic-lle",
+  "issueTracker": "https://github.com/lucastiger/stochastic-lle/issues",
   "programmingLanguage": [
     "Python"
   ],
@@ -68,6 +68,6 @@
   "relatedLink": [
     "https://arxiv.org/abs/2604.05897"
   ],
-  "readme": "https://github.com/lucastiger/soliton-control/blob/main/README.md",
-  "buildInstructions": "https://github.com/lucastiger/soliton-control/blob/main/CONTRIBUTING.md"
+  "readme": "https://github.com/lucastiger/stochastic-lle/blob/main/README.md",
+  "buildInstructions": "https://github.com/lucastiger/stochastic-lle/blob/main/CONTRIBUTING.md"
 }

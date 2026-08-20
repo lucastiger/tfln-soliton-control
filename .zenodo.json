@@ -1,5 +1,5 @@
 {
-  "title": "soliton-control: a validated stochastic Lugiato-Lefever benchmark",
+  "title": "stochastic-lle: a validated stochastic Lugiato-Lefever benchmark",
   "description": "<p>A JAX split-step Fourier solver for the Lugiato-Lefever equation with physically normalized stochastic channels &mdash; quantum vacuum, thermorefractive, pyroelectric-electro-optic, thermal-carrier, pump frequency noise and pump RIN &mdash; together with the verification suite that makes their attribution falsifiable: exact-CW and manufactured-solution convergence, a pyLLE cross-check, hash-pinned golden trajectories, and a per-channel noise budget computed with common random numbers.</p><p>Every noise channel is opt-in and every default reproduces the deterministic solver bit-for-bit; <code>tests/test_noise_off_identity.py</code> enforces that against committed golden trajectories.</p>",
   "upload_type": "software",
   "version": "1.0.0",
@@ -23,7 +23,7 @@
   "_creators_todo": "TODO: add \"orcid\": \"0000-0000-0000-0000\" (bare iD, no URL prefix -- Zenodo's format) to the creator entry above once the real ORCID is known. Deliberately absent rather than invented.",
   "related_identifiers": [
     {
-      "identifier": "https://github.com/lucastiger/soliton-control",
+      "identifier": "https://github.com/lucastiger/stochastic-lle",
       "relation": "isSupplementTo",
       "scheme": "url"
     },

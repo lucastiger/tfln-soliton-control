@@ -77,9 +77,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/lucastiger/soliton-control"
-Repository = "https://github.com/lucastiger/soliton-control"
-Changelog = "https://github.com/lucastiger/soliton-control/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/Mengjie-Yu-Group/stochastic-lle"
+Repository = "https://github.com/lucastiger/stochastic-lle"
+Changelog = "https://github.com/lucastiger/stochastic-lle/blob/main/CHANGELOG.md"
 
 [tool.setuptools]
 # Explicit, because this is a flat layout with many non-package top-level

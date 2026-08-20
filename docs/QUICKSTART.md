@@ -15,8 +15,8 @@ default config relative to the checkout, so a non-editable wheel imports but can
 `config/sin_params.yaml`.
 
 ```bash
-git clone https://github.com/lucastiger/soliton-control
-cd soliton-control
+git clone https://github.com/Mengjie-Yu-Group/stochastic-lle
+cd stochastic-lle
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```

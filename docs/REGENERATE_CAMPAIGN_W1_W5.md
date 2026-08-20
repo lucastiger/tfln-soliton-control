@@ -40,8 +40,8 @@ runtime type.
 ```python
 BRANCH = "claude/normal-ordered-spectrum"   # or "main" once this has merged
 
-!git clone --depth 1 --branch {BRANCH} https://github.com/lucastiger/soliton-control.git
-%cd /content/soliton-control
+!git clone --depth 1 --branch {BRANCH} https://github.com/lucastiger/stochastic-lle.git
+%cd /content/stochastic-lle
 !git log --oneline -1
 ```
 
@@ -50,7 +50,7 @@ For a private repo, use a fine-grained PAT with `contents: read`:
 ```python
 from getpass import getpass
 TOKEN = getpass("GitHub token: ")
-!git clone --depth 1 --branch {BRANCH} https://{TOKEN}@github.com/lucastiger/soliton-control.git
+!git clone --depth 1 --branch {BRANCH} https://{TOKEN}@github.com/lucastiger/stochastic-lle.git
 ```
 
 ### Cell 3 — sanity check before spending GPU time

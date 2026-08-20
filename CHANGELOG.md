@@ -29,6 +29,26 @@ regenerated fixtures named — see [CONTRIBUTING.md](CONTRIBUTING.md).
   `--skip-hardware-locked` is **off by default**: an ordinary `pytest` run on
   the reference machine still asserts every byte comparison.
 
+- **The repository was renamed from `soliton-control` to `stochastic-lle`.**
+  Development, issue tracking, releases and CI continue on the personal
+  upstream, [`lucastiger/stochastic-lle`][upstream]; the install instructions in
+  `README.md` and `docs/QUICKSTART.md` now clone the lab organization's
+  public-facing fork, [`Mengjie-Yu-Group/stochastic-lle`][org-fork], which is
+  maintained as a fast-forward mirror of that upstream.
+
+  Two local identifiers changed with it and are not automatic on an existing
+  checkout: the conda environment name in `environment.yml` and the documented
+  Docker image tag are both now `stochastic-lle` rather than `soliton-control`.
+  Recreate the environment (`conda env create -f environment.yml`) or rebuild
+  the image under the new tag; an environment or image created under the old
+  name keeps working and is simply no longer what the documentation names.
+
+  The Python distribution name in `pyproject.toml` is **unchanged**. Frozen
+  validation artifacts, vendored `third_party/` sources and the historical
+  provenance records under `analysis/results/` also keep the old name on
+  purpose: they are hash-pinned evidence of runs that happened under it, and
+  rewriting them would be falsifying a record rather than updating a reference.
+
 ### Added
 
 - `conftest.HARDWARE_LOCKED_NODE_IDS` — the six test functions (eight node IDs)
@@ -126,5 +146,7 @@ number this simulator produced. In particular, as of this release:
 - the DW-recoil linewidth significance is a within-record estimate, not a
   run-to-run reproducibility bound.
 
-[Unreleased]: https://github.com/lucastiger/soliton-control/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/lucastiger/soliton-control/releases/tag/v1.0.0
+[Unreleased]: https://github.com/lucastiger/stochastic-lle/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/lucastiger/stochastic-lle/releases/tag/v1.0.0
+[upstream]: https://github.com/lucastiger/stochastic-lle
+[org-fork]: https://github.com/Mengjie-Yu-Group/stochastic-lle
