@@ -5,7 +5,7 @@
 # and model/train.py::train_controller.
 #
 # Physics constants for the thermal loss term (Gamma_th, tau_th, horizon_dt) are
-# injected at runtime from `data.config_path` (config/tfln_params.yaml) — they are
+# injected at runtime from `data.config_path` (config/sin_params.yaml) — they are
 # intentionally NOT duplicated under `loss`.
 
 experiment:

@@ -17,7 +17,7 @@ key-rename debt handled here: the dataloader emits the class label under
 ``"label"``; the loss expects ``"state_label"`` (see ``assemble_observer_targets``).
 
 Physics constants for the thermal loss term (``Gamma_th``, ``tau_th``,
-``horizon_dt``) are injected from ``config/tfln_params.yaml`` at runtime via
+``horizon_dt``) are injected from ``config/sin_params.yaml`` at runtime via
 ``simulator.lle_solver._load_config`` — never from the model context vector.
 
 CLI::
@@ -168,7 +168,7 @@ def resolve_horizon_dt(
          (older datasets / unit tests) -> ``RuntimeWarning`` and ``10 / fsr_hz``; provenance
          ``"fallback(snapshot_interval=10)"``. NOT the old 1e-7.
 
-    ``fsr_hz`` is coerced to float (tfln_params.yaml stores it as an unsigned-exponent string).
+    ``fsr_hz`` is coerced to float (sin_params.yaml stores it as an unsigned-exponent string).
     """
     if explicit is not None:
         return float(explicit), "explicit_config"
@@ -643,7 +643,7 @@ def build_model_config(cfg: SimpleNamespace) -> ModelConfig:
 def build_loss_config(
     cfg: SimpleNamespace, phys: dict[str, Any], horizon_dt: float | None = None
 ) -> LossConfig:
-    """Build a ``LossConfig``, injecting thermal constants from ``tfln_params.yaml``.
+    """Build a ``LossConfig``, injecting thermal constants from ``sin_params.yaml``.
 
     ``Gamma_th``/``tau_th`` come from the physics config. ``horizon_dt`` is data-derived:
     if a pre-resolved value is passed it is used directly (the factory paths do this so the

@@ -18,7 +18,7 @@ Design notes baked into this file (see the original review):
     exists, so the term is gone.
   * ``forward`` takes NO ``context`` argument. The only physics term left
     (``L_thermal``) uses ``phys_state_refined[:, 3]`` (= ``U_int_est``) and config
-    constants sourced from ``tfln_params.yaml`` — never from ``context``.
+    constants sourced from ``sin_params.yaml`` — never from ``context``.
   * Forecast losses are Gaussian betaNLL (Seitzer et al. 2022), not MSE: the
     detuning and P_trans heads are heteroscedastic (``*_logvar``). The P_trans
     reconstruction loss is observer-only (controller has no P_trans head).
@@ -54,7 +54,7 @@ class LossConfig:
     lambda_effort_ctrl: float = 0.01    # |act_detuning_correction|^2
     lambda_thermal_ctrl: float = 0.0    # default OFF; see caveat in thermal term
 
-    # Physics constants (from tfln_params.yaml; required for thermal term)
+    # Physics constants (from sin_params.yaml; required for thermal term)
     Gamma_th: float = 0.0
     tau_th: float = 1.0
     horizon_dt: float = 1e-7            # seconds per horizon step (100 ns nominal)

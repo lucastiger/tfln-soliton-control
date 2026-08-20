@@ -1,4 +1,4 @@
-"""Regression tests for config/tfln_params.yaml parsing.
+"""Regression tests for config/sin_params.yaml parsing.
 
 PyYAML's default (1.1) resolver only treats an exponential float as a float
 when its exponent carries an explicit sign (e.g. ``2.0e+11``). An unsigned
