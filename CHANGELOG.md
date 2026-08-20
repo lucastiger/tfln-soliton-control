@@ -36,16 +36,22 @@ regenerated fixtures named — see [CONTRIBUTING.md](CONTRIBUTING.md).
   public-facing fork, [`Mengjie-Yu-Group/stochastic-lle`][org-fork], which is
   maintained as a fast-forward mirror of that upstream.
 
-  Two local identifiers changed with it and are not automatic on an existing
-  checkout: the conda environment name in `environment.yml` and the documented
-  Docker image tag are both now `stochastic-lle` rather than `soliton-control`.
-  Recreate the environment (`conda env create -f environment.yml`) or rebuild
-  the image under the new tag; an environment or image created under the old
-  name keeps working and is simply no longer what the documentation names.
+  Three local identifiers changed with it and are not automatic on an existing
+  checkout: the conda environment name in `environment.yml`, the documented
+  Docker image tag, and the Python distribution name in `pyproject.toml` are all
+  now `stochastic-lle` rather than `soliton-control`. Recreate the environment
+  (`conda env create -f environment.yml`) or rebuild the image under the new
+  tag; an environment or image created under the old name keeps working and is
+  simply no longer what the documentation names.
 
-  The Python distribution name in `pyproject.toml` is **unchanged**. Frozen
-  validation artifacts, vendored `third_party/` sources and the historical
-  provenance records under `analysis/results/` also keep the old name on
+  The distribution rename needs one further step. `simulator.__version__` is
+  read from the installed distribution's metadata rather than duplicated in the
+  source, so a checkout installed under the old name reports `"0.0.0+unknown"`
+  until it is reinstalled with `pip install -e .`. The optional extra is now
+  `pip install stochastic-lle[ml]`.
+
+  Frozen validation artifacts, vendored `third_party/` sources and the
+  historical provenance records under `analysis/results/` keep the old name on
   purpose: they are hash-pinned evidence of runs that happened under it, and
   rewriting them would be falsifying a record rather than updating a reference.
 
