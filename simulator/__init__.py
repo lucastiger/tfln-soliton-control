@@ -48,7 +48,7 @@ array-creation time -- code that must control the ordering imports the
 submodule explicitly.
 
 ``__version__`` is read from the installed distribution metadata of the
-``soliton-control`` project rather than duplicated here, so it cannot drift
+``stochastic-lle`` project rather than duplicated here, so it cannot drift
 from ``pyproject.toml``. A source tree that was never installed (no
 distribution metadata) reports ``"0.0.0+unknown"``.
 
@@ -76,7 +76,7 @@ __all__ = [
 ]
 
 try:
-    #: Version of the installed ``soliton-control`` distribution.
-    __version__: str = _distribution_version("soliton-control")
+    #: Version of the installed ``stochastic-lle`` distribution.
+    __version__: str = _distribution_version("stochastic-lle")
 except PackageNotFoundError:  # pragma: no cover - source tree, never installed
     __version__ = "0.0.0+unknown"

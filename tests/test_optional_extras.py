@@ -2,7 +2,7 @@
 
 ``torch`` and ``einops`` live in the ``ml`` extra rather than the base
 dependency set, so a base-only environment -- the Docker image, the ``fast`` CI
-job, anyone who ran ``pip install soliton-control`` to reproduce a benchmark
+job, anyone who ran ``pip install stochastic-lle`` to reproduce a benchmark
 number -- does not have them. Two test modules import torch at module scope, and
 a module-scope import of a missing package is a COLLECTION ERROR: it aborts the
 entire run, not just that file. ``conftest._OPTIONAL_MODULE_REQUIREMENTS`` names
