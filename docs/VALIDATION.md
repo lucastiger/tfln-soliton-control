@@ -239,7 +239,7 @@ than the floating one. `requirements.lock.txt` pins the exact `jaxlib` the golde
 produced with, which is what makes the 0-ULP check meaningful:
 
 ```bash
-docker build -t soliton-control . && docker run --rm soliton-control
+docker build -t stochastic-lle . && docker run --rm stochastic-lle
 ```
 
 or directly:

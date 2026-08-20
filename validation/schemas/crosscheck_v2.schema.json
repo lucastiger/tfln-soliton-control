@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/lucastiger/soliton-control/validation/schemas/crosscheck_v2.schema.json",
+  "$id": "https://github.com/lucastiger/stochastic-lle/validation/schemas/crosscheck_v2.schema.json",
   "title": "Cross-code comparison report, v2 (convergence-aware criteria)",
   "description": "Output of the pyLLE cross-check under validation/criteria.py. Criteria are classified HARD / GATED / DIAGNOSTIC; GATED tolerances are derived from measured convergence studies and fingerprinted, and DIAGNOSTIC results are structurally unable to affect the overall verdict.",
   "type": "object",

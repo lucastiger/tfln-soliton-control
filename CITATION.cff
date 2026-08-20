@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite both the software (this file) and the paper listed under preferred-citation."
-title: "soliton-control: a validated stochastic Lugiato-Lefever benchmark"
+title: "stochastic-lle: a validated stochastic Lugiato-Lefever benchmark"
 abstract: >-
   A JAX split-step Fourier solver for the Lugiato-Lefever equation with
   physically normalized stochastic channels -- quantum vacuum, thermorefractive,
@@ -14,8 +14,8 @@ version: 1.0.0
 # TODO: set to the actual release date before tagging v1.0.0.
 date-released: "2026-08-17"
 license: MIT
-repository-code: "https://github.com/lucastiger/soliton-control"
-url: "https://github.com/lucastiger/soliton-control"
+repository-code: "https://github.com/lucastiger/stochastic-lle"
+url: "https://github.com/Mengjie-Yu-Group/stochastic-lle"
 
 authors:
   - family-names: "Wu"

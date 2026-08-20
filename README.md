@@ -1,6 +1,6 @@
-# soliton-control
+# stochastic-lle
 
-[![CI](https://github.com/lucastiger/soliton-control/actions/workflows/ci.yml/badge.svg)](https://github.com/lucastiger/soliton-control/actions/workflows/ci.yml)
+[![CI](https://github.com/lucastiger/stochastic-lle/actions/workflows/ci.yml/badge.svg)](https://github.com/lucastiger/stochastic-lle/actions/workflows/ci.yml)
 [![DOI](https://img.shields.io/badge/DOI-pending%20first%20release-lightgrey)](CITATION.cff)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Python 3.10 | 3.11 | 3.12](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](pyproject.toml)
@@ -24,8 +24,8 @@ relative to the checkout, so a non-editable wheel imports but cannot find
 
 ```bash
 # pip
-git clone https://github.com/lucastiger/soliton-control
-cd soliton-control
+git clone https://github.com/Mengjie-Yu-Group/stochastic-lle
+cd stochastic-lle
 python -m venv .venv && source .venv/bin/activate
 pip install -e .                      # add ".[dev]" for the tests and notebooks
 ```
@@ -33,14 +33,14 @@ pip install -e .                      # add ".[dev]" for the tests and notebooks
 ```bash
 # conda
 conda env create -f environment.yml
-conda activate soliton-control
+conda activate stochastic-lle
 pip install --no-deps -e .
 ```
 
 ```bash
 # docker — the pinned, hash-verified toolchain; runs the fast suite on start
-docker build -t soliton-control .
-docker run --rm soliton-control
+docker build -t stochastic-lle .
+docker run --rm stochastic-lle
 ```
 
 Extras are opt-in: `dev` (pytest, ruff, jupyter, nbconvert, sympy), `ml` (torch, einops — the
@@ -170,11 +170,11 @@ silently substituted. Full detail, with expected outputs:
 See [`CITATION.cff`](CITATION.cff). The software and the paper are cited separately:
 
 ```bibtex
-@software{soliton_control,
-  title  = {soliton-control: a validated stochastic Lugiato-Lefever benchmark},
+@software{stochastic_lle,
+  title  = {stochastic-lle: a validated stochastic Lugiato-Lefever benchmark},
   author = {Wu, Lucas},
   year   = {2026},
-  url    = {https://github.com/lucastiger/soliton-control},
+  url    = {https://github.com/lucastiger/stochastic-lle},
   version = {1.0.0},
   license = {MIT}
 }
@@ -204,7 +204,7 @@ speculative.
 ## Repository layout
 
 ```text
-soliton-control/
+stochastic-lle/
 ├── config/sin_params.yaml     device config + the top-level `noise:` block
 ├── simulator/                 solver, noise models, colored-noise engine, labeler
 ├── analysis/                  budget, metrology, reports, soliton access

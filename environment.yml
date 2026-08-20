@@ -1,7 +1,7 @@
 # Conda alternative to requirements.lock.txt.
 #
 #     conda env create -f environment.yml
-#     conda activate soliton-control
+#     conda activate stochastic-lle
 #     pip install --no-deps -e .
 #
 # Mirrors the lock file's DIRECT dependencies at the same versions. Read the
@@ -25,7 +25,7 @@
 # requirements.lock.txt with --require-hashes.
 # ---------------------------------------------------------------------------
 
-name: soliton-control
+name: stochastic-lle
 
 channels:
   - conda-forge
