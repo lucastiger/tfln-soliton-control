@@ -16,6 +16,7 @@ import ast
 import fnmatch
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -39,6 +40,15 @@ CODEMETA = REPO_ROOT / "codemeta.json"
 ZENODO = REPO_ROOT / ".zenodo.json"
 DOCKERFILE = REPO_ROOT / "Dockerfile"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+SIMULATOR_INIT = REPO_ROOT / "simulator" / "__init__.py"
+README = REPO_ROOT / "README.md"
+QUICKSTART = REPO_ROOT / "docs" / "QUICKSTART.md"
+
+# The repository has two GitHub homes and they are not interchangeable. The
+# organization fork is what a reader is pointed at; the personal upstream is
+# where the work happens and where issues are filed.
+ORG_FORK = "Mengjie-Yu-Group/stochastic-lle"
+PERSONAL_UPSTREAM = "lucastiger/stochastic-lle"
 
 # The keyword set the task specified for the archival metadata. Pinned here so
 # a drive-by edit to one file does not desynchronise the three.
@@ -562,3 +572,326 @@ def test_identity_job_does_not_claim_blocking_zero_ulp() -> None:
 def test_readme_carries_the_ci_badge() -> None:
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     assert "workflows/ci.yml/badge.svg" in readme
+
+
+# ---------------------------------------------------------------------------
+# Repository identity
+# ---------------------------------------------------------------------------
+
+# The one call in simulator/__init__.py that turns a distribution name into a
+# version. Matched as text, on purpose -- see the test below.
+_DISTRIBUTION_VERSION_CALL = re.compile(
+    r"_distribution_version\(\s*(['\"])(?P<name>[^'\"]+)\1\s*\)"
+)
+
+# The three spellings of a name this repository no longer has. `soliton-control`
+# was the repository's former name; `tfln` is the older prefix that preceded it.
+STALE_REPOSITORY_NAMES = ("soliton-control", "soliton_control", "tfln")
+
+# Where those spellings are allowed to survive. Entries ending in "/" cover a
+# subtree; the rest are exact paths. Every entry is justified in the docstring
+# of test_no_stale_repository_name_outside_the_frozen_surface -- do not extend
+# this list without adding the same kind of reason there.
+FROZEN_NAME_SURFACE = (
+    "third_party/",
+    "validation/results/",
+    "analysis/results/",
+    "validation/pylle_crosscheck.py",
+    "validation/pylle_crosscheck_v2.py",
+    "analysis/ablations.py",
+    "model/train.py",
+    "config/training_config.yaml",
+    "CHANGELOG.md",
+    "tests/test_packaging_metadata.py",
+)
+
+# Suffixes whose contents are not text. Skipped rather than decoded, so a stray
+# byte sequence in a .npz cannot be reported as a stale name.
+_BINARY_SUFFIXES = {".npz", ".npy", ".png", ".pdf", ".h5", ".hdf5", ".pt", ".ico"}
+
+# README link targets that must resolve inside whichever repository the reader
+# is browsing. Directories end in "/"; the rest are matched as path suffixes.
+_RELATIVE_LINK_TARGETS = (
+    "CITATION.cff",
+    "LICENSE",
+    "CONTRIBUTING.md",
+    "CHANGELOG.md",
+    "pyproject.toml",
+    "notebooks/",
+)
+
+
+def _tracked_files() -> list[str]:
+    """Repo-relative POSIX paths of every git-tracked file.
+
+    Tracked rather than walked: an untracked scratch file or a stale virtualenv
+    in the working tree is not part of the repository's identity, and a plain
+    ``Path.rglob`` would drag both in.
+    """
+    try:
+        completed = subprocess.run(
+            ["git", "ls-files", "-z"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:  # pragma: no cover
+        pytest.skip(f"cannot enumerate tracked files with git: {exc}")
+    return [path for path in completed.stdout.split("\0") if path]
+
+
+def _is_frozen_surface(rel_path: str) -> bool:
+    return any(
+        rel_path == entry or rel_path.startswith(entry)
+        for entry in FROZEN_NAME_SURFACE
+    )
+
+
+def _markdown_link_targets(text: str) -> list[str]:
+    """Every ``](target)`` destination in a Markdown document, images included."""
+    return re.findall(r"\]\(\s*<?([^)\s>]+)", text)
+
+
+def test_distribution_name_matches_the_runtime_lookup() -> None:
+    """pyproject's [project] name and the importlib lookup are a coupled pair.
+
+    ``simulator/__init__.py`` reads ``__version__`` out of the installed
+    distribution metadata rather than duplicating the number, which is the right
+    design -- but nothing links the two strings. If they ever disagree (a rename
+    in pyproject.toml that misses the module, or a module edit that misses
+    pyproject.toml), ``version()`` raises ``PackageNotFoundError``, the module
+    CATCHES it, and ``__version__`` becomes "0.0.0+unknown". Nothing raises,
+    no test goes red, and every artifact stamped from that point on records a
+    version that never existed. The failure is silent, so it is checked here.
+
+    The module is read as TEXT and not imported, deliberately: in an uninstalled
+    source tree a perfectly correct module also reports "0.0.0+unknown", so an
+    importing check would be blind exactly where this one has to see.
+    """
+    declared = _pyproject()["project"]["name"]
+    source = SIMULATOR_INIT.read_text(encoding="utf-8")
+
+    matches = [match.group("name") for match in _DISTRIBUTION_VERSION_CALL.finditer(source)]
+    assert len(matches) == 1, (
+        "expected exactly one _distribution_version(...) call in "
+        f"simulator/__init__.py, found {len(matches)}: {matches}. Update this "
+        "guard rather than leaving the coupling unchecked."
+    )
+    assert matches[0] == declared, (
+        f"pyproject.toml declares the distribution as {declared!r} but "
+        f"simulator/__init__.py looks up {matches[0]!r}. The lookup will raise "
+        "PackageNotFoundError, which is caught, so __version__ silently becomes "
+        "'0.0.0+unknown' in every install and every stamped artifact."
+    )
+
+
+def test_no_stale_repository_name_outside_the_frozen_surface() -> None:
+    """The repository's former names must not creep back into live files.
+
+    A rename that leaves half the tree behind is not cosmetic: it produces
+    install instructions that clone nothing, imports that do not resolve, and
+    documentation that sends a reader to a repository that is not this one.
+
+    The allowlist is the surface where an old name is *correct*, and each entry
+    earns its place for a different reason:
+
+    ``third_party/``
+        Integrity-verified vendored source. ``third_party/pylle/verify_vendor.py``
+        checks this tree against a pinned upstream commit, and the patch headers
+        carry the tag the patches were authored under. Editing the strings would
+        break the verification that makes the cross-check trustworthy.
+    ``validation/results/``
+        Hash-pinned artifacts. ``tests/test_validation_freeze.py`` pins these by
+        hash; touching a byte invalidates the freeze, and the absolute paths
+        inside them are historical provenance -- the record of where the run
+        actually happened, which is not something to retouch.
+    ``analysis/results/``
+        Historical provenance again: recorded output paths from runs that were
+        performed under the old name. A provenance record that is edited after
+        the fact is worth less than one that is left alone.
+    ``validation/pylle_crosscheck.py``, ``validation/pylle_crosscheck_v2.py``
+        Frozen figure labels. The old name appears in a suptitle and a legend
+        entry of figures that are already published; renaming the label would
+        make the regenerated figure disagree with the one in the paper.
+    ``model/train.py``, ``config/training_config.yaml``, ``analysis/ablations.py``
+        The experimental PI-RNN subsystem, which is not on the path from a
+        config file to a benchmark number. Its run names, dataset labels and
+        checkpoint directories are its own vocabulary, and existing runs on disk
+        are keyed by them.
+    ``CHANGELOG.md``
+        Historical changelog prose. It documents the rename itself; a changelog
+        that has been scrubbed of the old name cannot tell anyone the rename
+        happened.
+    ``tests/test_packaging_metadata.py``
+        This file, which has to contain the needles in order to search for them.
+    """
+    offenders: dict[str, list[str]] = {}
+    for rel_path in _tracked_files():
+        if _is_frozen_surface(rel_path) or Path(rel_path).suffix in _BINARY_SUFFIXES:
+            continue
+        path = REPO_ROOT / rel_path
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:  # pragma: no cover - binary file, not identity
+            continue
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            for stale in STALE_REPOSITORY_NAMES:
+                if stale in line:
+                    offenders.setdefault(rel_path, []).append(
+                        f"line {lineno}: {stale!r}"
+                    )
+
+    assert not offenders, (
+        "a former repository name survives outside the frozen artifact surface: "
+        f"{offenders}. Rename it to `stochastic-lle`, or -- if the occurrence is "
+        "genuinely frozen (a hash-pinned artifact, vendored source, a recorded "
+        "provenance path, a published figure label) -- add its path to "
+        "FROZEN_NAME_SURFACE together with the reason, in the docstring above."
+    )
+
+
+def test_no_reference_to_a_repository_name_that_never_existed() -> None:
+    """`tfln-stochastic-lle` is the artefact of a careless rename, not a repo.
+
+    It is exactly what a naive substring replace of the old name inside
+    `tfln-soliton-control` leaves behind, so it appears plausible on sight. No
+    repository has ever had that name, which means GitHub serves it no redirect:
+    unlike a genuine former name, every link and clone command carrying it is a
+    hard 404 with nothing to follow. Frozen artifacts are not exempt from this
+    one -- there is no historical record in which the string was ever correct.
+    """
+    offenders = []
+    for rel_path in _tracked_files():
+        path = REPO_ROOT / rel_path
+        if Path(rel_path).suffix in _BINARY_SUFFIXES or not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:  # pragma: no cover - binary file
+            continue
+        if rel_path == "tests/test_packaging_metadata.py":
+            continue
+        if "tfln-stochastic-lle" in text:
+            offenders.append(rel_path)
+
+    assert not offenders, (
+        f"{offenders} reference `tfln-stochastic-lle`, a repository name that has "
+        "never existed. GitHub has no redirect for it, so the link is a permanent "
+        "404. The repository is `stochastic-lle`."
+    )
+
+
+def test_public_facing_urls_point_at_the_organization_fork() -> None:
+    """What a reader is told to clone must be the fork they can actually reach.
+
+    The organization fork is the public face of this work. Install instructions
+    and the metadata field that renders as "Homepage" have to name it, because
+    a reader arriving from the paper or from Zenodo lands there and a clone URL
+    pointing somewhere else is the first thing that fails for them.
+    """
+    for doc in (README, QUICKSTART):
+        clones = re.findall(r"git clone\s+(\S+)", doc.read_text(encoding="utf-8"))
+        assert clones, f"{doc.name} no longer contains a `git clone` command"
+        for url in clones:
+            assert ORG_FORK in url, (
+                f"{doc.name} tells the reader to clone {url!r}; the public install "
+                f"instructions must point at {ORG_FORK}."
+            )
+
+    homepage = _pyproject()["project"]["urls"]["Homepage"]
+    assert ORG_FORK in homepage, (
+        f"pyproject.toml Homepage is {homepage!r}; it renders as the project's "
+        f"public link on PyPI and must point at {ORG_FORK}."
+    )
+
+    url = yaml_safe_load(CITATION)["url"]
+    assert ORG_FORK in str(url), (
+        f"CITATION.cff url is {url!r}; the citation's landing page must be "
+        f"{ORG_FORK}."
+    )
+
+
+def test_development_urls_point_at_the_personal_upstream() -> None:
+    """Where the work happens, and where a bug report has to be filed.
+
+    The split is not decoration. The personal upstream carries the history, the
+    CI runs and the release tags, so Repository, Changelog, repository-code and
+    codeRepository name it.
+
+    issueTracker is the entry that cannot be the fork under any circumstances:
+    GitHub disables the Issues tab on a fork by default, so an issueTracker
+    pointing at Mengjie-Yu-Group/stochastic-lle sends a reporter to a page that
+    does not exist -- and the metadata is machine-read, so the dead link
+    propagates into codemeta consumers rather than being noticed by a human.
+    """
+    urls = _pyproject()["project"]["urls"]
+    for field in ("Repository", "Changelog"):
+        assert PERSONAL_UPSTREAM in urls[field], (
+            f"pyproject.toml {field} is {urls[field]!r}; development URLs must "
+            f"point at {PERSONAL_UPSTREAM}."
+        )
+
+    repository_code = str(yaml_safe_load(CITATION)["repository-code"])
+    assert PERSONAL_UPSTREAM in repository_code, (
+        f"CITATION.cff repository-code is {repository_code!r}; it must name the "
+        f"upstream that holds the history, {PERSONAL_UPSTREAM}."
+    )
+
+    codemeta = json.loads(CODEMETA.read_text(encoding="utf-8"))
+    assert PERSONAL_UPSTREAM in codemeta["codeRepository"], (
+        f"codemeta.json codeRepository is {codemeta['codeRepository']!r}; it must "
+        f"be {PERSONAL_UPSTREAM}."
+    )
+    assert PERSONAL_UPSTREAM in codemeta["issueTracker"], (
+        f"codemeta.json issueTracker is {codemeta['issueTracker']!r}. It must be "
+        f"{PERSONAL_UPSTREAM}/issues: forks have Issues disabled by default, so a "
+        "tracker URL on the fork is a 404 for whoever tries to report a bug."
+    )
+
+
+def test_readme_documentation_links_are_relative() -> None:
+    """Relative links are what makes the fork render correctly.
+
+    A relative link resolves against whichever repository the reader is browsing,
+    so the same README works on the personal upstream and on the organization
+    fork. Hard-code `https://github.com/<owner>/...` into those links and every
+    reader on the fork is silently walked back to the other repository -- where
+    they may see a different commit, or no access at all. It also breaks the
+    moment either repository is renamed or moved, which is precisely the rot
+    this module exists to catch.
+    """
+    text = README.read_text(encoding="utf-8")
+    targets = _markdown_link_targets(text)
+    assert targets, "README.md contains no Markdown links at all"
+
+    def is_protected(target: str) -> bool:
+        path = target.split("#")[0].split("?")[0]
+        if re.search(r"docs/[^/]+\.md$", path):
+            return True
+        return any(
+            path.rstrip("/").endswith(entry.rstrip("/"))
+            for entry in _RELATIVE_LINK_TARGETS
+        )
+
+    absolute = [
+        target
+        for target in targets
+        if target.startswith("https://github.com/") and is_protected(target)
+    ]
+    assert not absolute, (
+        f"README.md links to repository files by absolute URL: {absolute}. Use a "
+        "relative link -- it resolves against whichever repository the reader is "
+        f"in, which is what makes {ORG_FORK} render correctly."
+    )
+
+    # ...and the guard must not pass by there being nothing left to link to.
+    relative = {target for target in targets if not re.match(r"[a-z]+:", target)}
+    assert any(re.search(r"docs/[^/]+\.md$", target) for target in relative), (
+        "README.md no longer links to any docs/*.md file relatively"
+    )
+    assert any(target.endswith("CITATION.cff") for target in relative), (
+        "README.md no longer links to CITATION.cff relatively"
+    )
