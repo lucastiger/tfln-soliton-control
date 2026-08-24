@@ -187,5 +187,15 @@ jobs:
       # artifacts cannot pass here. Without it this job would report failure
       # every Sunday for a 1e-19 rounding difference and be ignored within a
       # month.
+      #
+      # --runslow makes this the ONLY job that reaches the n_tau=1024 cases, so
+      # it is also the only one whose skip list has to cover them. The first
+      # scheduled run failed on exactly that gap: s1024_near sits at
+      # Delta_omega = 2*kappa, in the chaotic regime, where the runner's
+      # rounding is amplified to max_rel_diff ~ 1 rather than staying at 1e-19.
+      # That case is now listed by node ID in HARDWARE_LOCKED_NODE_IDS, with the
+      # measurements, in conftest.py. If a new PARAM_SETS entry lands in a
+      # chaotic regime, expect to do the same for it -- and read the entry
+      # first, because widening ATOL is not the alternative.
       - name: pytest (including slow)
         run: pytest -q --runslow --skip-hardware-locked

@@ -493,9 +493,21 @@ def test_every_hardware_locked_id_still_names_a_real_test() -> None:
     it was meant to exclude either ran (and failed) or, worse, had been renamed
     and was quietly excluded by a different stale prefix. So each entry is
     checked against the source: the file exists, and it defines that function.
+
+    Entries may be parametrised (``...::test_x[case]``), which pins one case of
+    a test whose other cases must keep running. The function name is checked
+    against the syntax tree as before; the bracketed part cannot be, since it
+    comes from a fixture or a parametrize argument evaluated at collection
+    time. So the whole list is additionally checked against what pytest really
+    collects -- that catches a dropped or renamed PARAMETER, which the AST
+    check alone cannot see and which fails exactly as silently as a renamed
+    function.
     """
-    for node_id in _conftest_module().HARDWARE_LOCKED_NODE_IDS:
+    node_ids = _conftest_module().HARDWARE_LOCKED_NODE_IDS
+
+    for node_id in node_ids:
         rel_path, _, func = node_id.partition("::")
+        func = func.partition("[")[0]
         path = REPO_ROOT / rel_path
         assert path.is_file(), f"{node_id} names a file that does not exist: {rel_path}"
 
@@ -509,6 +521,23 @@ def test_every_hardware_locked_id_still_names_a_real_test() -> None:
             f"{node_id} names a test that {rel_path} no longer defines. Update "
             "conftest.HARDWARE_LOCKED_NODE_IDS -- a stale prefix silently "
             "excludes nothing, and the `fast` CI job would keep reporting green."
+        )
+
+    # Collect the named files only -- the whole suite would cost minutes here.
+    # No --runslow: slow items are marked skipped at collection, never dropped,
+    # so a slow-only parametrisation still appears in this listing.
+    files = sorted({node_id.partition("::")[0] for node_id in node_ids})
+    collected = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", *files],
+        cwd=REPO_ROOT, capture_output=True, text=True,
+    ).stdout.splitlines()
+
+    for node_id in node_ids:
+        assert any(line.startswith(node_id) for line in collected), (
+            f"{node_id} matches nothing pytest collects. A prefix that matches "
+            "nothing excludes nothing, so the CI jobs passing "
+            "--skip-hardware-locked would run it and go red. If a parametrised "
+            "entry is stale, check that the case id still exists."
         )
 
 

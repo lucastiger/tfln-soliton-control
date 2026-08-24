@@ -77,10 +77,29 @@ So the reproducibility claim is **source × toolchain × hardware**, and the
   informational step that is allowed to fail. The observed hardware drift is
   ~6 orders of magnitude below that tolerance, so a real physics regression
   still fails the blocking step.
-- The `fast` job passes `--skip-hardware-locked`, which skips the byte
+- The `fast` and `slow` jobs pass `--skip-hardware-locked`, which skips the byte
   comparisons listed in `conftest.HARDWARE_LOCKED_NODE_IDS`. That flag is **off
   by default**: a plain `pytest` on the reference machine still asserts every
   one of them, and must pass.
+- **In a chaotic regime the drift is not small, and no tolerance rescues it.**
+  The bullet above — drift ~6 orders below ATOL — holds where the trajectory
+  settles onto a CW attractor, which is three of the four sets in
+  `validation.noise_off_identity.PARAM_SETS`. The fourth, `s1024_near`
+  (Δω = 2κ), passes through modulation instability into chaos, and there a
+  sub-ULP difference in XLA's reduction order grows exponentially — measured at
+  λ = 1.29e-2 per round trip, an e-folding every 77 — until the two
+  trajectories decorrelate. The first
+  weekly run measured `max_abs_diff = 1.2e-06`, `max_rel_diff = 1.06`. So that
+  one comparison is hardware-locked in a stronger sense than the others: it is
+  not that the runner is outside a tolerance, it is that no tolerance both
+  admits the runner and still detects a regression. It is skipped by node ID
+  rather than by widening ATOL, and it still asserts at 0 ULP on the reference
+  machine.
+
+  Read this as a statement about which observables travel. A *pointwise*
+  comparison of a chaotic trajectory is reproducible only on fixed hardware; if
+  you need a cross-machine claim in that regime, make it about a statistic of
+  the attractor, not about the samples.
 
 If you are recording a reproducibility claim for the paper, state the hardware.
 "jaxlib 0.10.2" is not sufficient to reproduce these bytes.
