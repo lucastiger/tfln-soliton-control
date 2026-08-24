@@ -159,15 +159,17 @@ def toolchain_versions() -> dict[str, str]:
 # (observed 6.2e-19 against ATOL 1e-13), so the physics is untouched; what fails
 # is only the byte-level claim.
 #
-# Hence this flag, used by the `fast` CI job. It changes nothing by default:
-# locally, on the reference machine, these tests run and must pass. Note that
-# test_all_off_bit_identical_to_golden is deliberately NOT in this list -- in
-# its default tolerance mode it passes everywhere, and it only turns strict
-# under SOLITON_STRICT_ULP=1, so it keeps guarding the noise-off path in CI.
+# Hence this flag, used by the `fast` and `slow` CI jobs. It changes nothing by
+# default: locally, on the reference machine, these tests run and must pass.
 #
-# Node IDs are matched by prefix, so parametrised cases are covered.
-# tests/test_packaging_metadata.py checks that every entry still names a real
-# test, so a rename cannot silently empty this list.
+# test_all_off_bit_identical_to_golden is listed for ONE parametrisation only,
+# and the reason is physics rather than packaging -- see the entry below.
+#
+# Node IDs are matched by prefix, so an unparametrised entry covers every case
+# of that test and a bracketed entry covers exactly one.
+# tests/test_packaging_metadata.py checks that every entry still matches a test
+# pytest actually collects, so neither a rename nor a dropped parameter can
+# silently empty this list.
 HARDWARE_LOCKED_NODE_IDS: tuple[str, ...] = (
     # vs tests/data/golden/*.npz, compare_to_golden(..., strict=True)
     "tests/test_thermal_integrator.py::test_euler_default_bit_identical",
@@ -178,6 +180,47 @@ HARDWARE_LOCKED_NODE_IDS: tuple[str, ...] = (
     "tests/test_dispersion_grid.py::test_fine_cadence_M1_identical_M_gt1_changes",
     # sha256 of a full solver trajectory
     "tests/test_regression_figures.py::test_default_path_golden_hash",
+    # vs tests/data/golden/s1024_near.npz, allclose(atol=1e-13) -- and this one
+    # is hardware-locked for a DIFFERENT reason from the five above. They fail
+    # off-reference by ~1e-19, a flat rounding difference. This case fails by
+    # ~1e-6 (max_rel_diff of order 1), because it is the only parameter set that
+    # runs in a CHAOTIC regime, where rounding differences do not stay small.
+    #
+    # s1024_near is the Delta_omega = 2*kappa case. Labelling its own golden
+    # trajectory with simulator.state_labeler.label_trajectory gives, over the
+    # 200 snapshots: CW for the first 40, modulation instability for the next
+    # 60, then chaotic (class 3) for the last 100. The other three sets are CW
+    # for every snapshot of every run.
+    #
+    # That difference is measurable rather than asserted. Perturbing delta_omega
+    # by one ULP (relative 2**-52) and re-running, max|dE| over the snapshots:
+    #
+    #   s256_short   3.4e-21 -> 7.2e-20     bounded, no growth
+    #   s512_prod    5.0e-22 -> 2.8e-20     bounded, no growth
+    #   s512_sub4    8.5e-22 -> 6.2e-20     bounded, no growth
+    #   s1024_near   3.4e-20 -> 1.3e-08     11.6 decades, monotonic
+    #
+    # The last row is exponential. A log-linear fit over the clean band between
+    # the float64 noise floor and saturation gives lambda = 1.29e-2 per round
+    # trip, an e-folding every 77 of them; the curve crosses ATOL=1e-13 at
+    # snapshot 85, which is where the labeller has MI giving way to chaos. On a
+    # CW attractor the dynamics contract and the last bits stay put; on a
+    # chaotic one they cannot.
+    #
+    # So for this parametrisation ATOL is not a tolerance that a different CPU
+    # can be brought inside of. Any sub-ULP difference in XLA's reduction order
+    # is amplified past ATOL well before the run ends, and then saturates at the
+    # attractor's own scale -- the first weekly run measured max_abs_diff
+    # 1.2e-06 and max_rel_diff 1.06 on E_snapshots, i.e. fully decorrelated,
+    # which is what chaos does and not what a regression looks like. Widening
+    # ATOL enough to pass here would have to reach order-1 relative error and
+    # would assert nothing at all.
+    #
+    # Scoped to the one case on purpose: the other three parametrisations of
+    # this test keep asserting the goldens at ATOL in `fast`, `identity` and
+    # `slow`, and on the reference machine a plain `pytest --runslow` still
+    # asserts all four, at 0 ULP under SOLITON_STRICT_ULP=1.
+    "tests/test_noise_off_identity.py::test_all_off_bit_identical_to_golden[s1024_near]",
 )
 
 

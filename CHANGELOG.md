@@ -13,6 +13,38 @@ regenerated fixtures named — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Changed
 
+- `test_all_off_bit_identical_to_golden[s1024_near]` joins
+  `conftest.HARDWARE_LOCKED_NODE_IDS`, so the weekly `slow` job skips it under
+  `--skip-hardware-locked` like the other byte comparisons. The first scheduled
+  run of that job — the first time the four `--runslow` cases had ever run on a
+  shared runner — failed on this one case, and the reason is worth recording
+  because it **refines the reproducibility claim rather than restating it**.
+
+  The other hardware-locked comparisons miss by ~1e-19: a flat rounding
+  difference, ~6 orders below the repo's ATOL of 1e-13. This one missed by
+  `max_abs_diff = 1.2e-06` with `max_rel_diff = 1.06` on `E_snapshots` — fully
+  decorrelated. `s1024_near` is the Δω = 2κ set, and labelling its own golden
+  with `simulator.state_labeler.label_trajectory` puts it in CW for 40
+  snapshots, modulation instability for 60, then **chaotic** for the last 100;
+  the other three sets are CW throughout. Perturbing `delta_omega` by one ULP
+  and re-running confirms the mechanism directly: max |δE| stays at ~1e-20 for
+  all three CW sets and grows 11.6 decades, monotonically, to 1.3e-08 for
+  `s1024_near` (λ = 1.29e-2 per round trip, an e-folding every 77, crossing
+  ATOL at snapshot 85).
+
+  So bit-identity for this case is hardware-locked in a stronger sense than the
+  rest: **no tolerance both admits a different CPU and still detects a
+  regression**, because the discrepancy saturates at the attractor's own scale.
+  It is therefore skipped by node ID rather than by widening ATOL — widening
+  would have had to reach order-1 relative error and would have asserted
+  nothing. Nothing else changed: the other three parametrisations still compare
+  against the goldens at ATOL in `fast`, `identity` and `slow`; `s1024_near`
+  keeps its three same-process byte-identity tests in every job (those compare
+  two runs on one machine, so chaos cannot affect them); and on the reference
+  machine a plain `pytest --runslow` still asserts all four, at 0 ULP under
+  `SOLITON_STRICT_ULP=1`. See
+  [CONTRIBUTING.md](CONTRIBUTING.md#bit-identity-is-scoped-to-hardware-not-just-to-versions).
+
 - The `fast` CI job now passes `--skip-hardware-locked`, and the `identity` job
   runs its 0-ULP comparison as an informational step with the tolerance
   comparison as the blocking one. Both follow from a measurement made by the
@@ -57,10 +89,12 @@ regenerated fixtures named — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Added
 
-- `conftest.HARDWARE_LOCKED_NODE_IDS` — the six test functions (eight node IDs)
+- `conftest.HARDWARE_LOCKED_NODE_IDS` — the seven test functions (ten node IDs)
   that compare solver output byte-for-byte against a committed artifact, with
   the evidence for why a shared runner cannot satisfy them. Guarded by
-  `tests/test_packaging_metadata.py` so a rename cannot silently empty the list.
+  `tests/test_packaging_metadata.py`, which checks each entry against what
+  pytest actually collects, so neither a rename nor a dropped parameter can
+  silently empty the list.
 
 ## [1.0.0] — 2026-08-17
 
